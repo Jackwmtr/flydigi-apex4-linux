@@ -36,7 +36,10 @@ Not done, honestly listed:
 - **adaptive triggers** — the pad has them, the command family for this model is
   not publicly known, nothing here drives them
 - **the roll sign** is unconfirmed; pitch and yaw were fixed empirically in a game
-- **Bluetooth modes** untested
+- **Bluetooth**: buttons, sticks, hat and analogue triggers work; **gyro and
+  rumble cannot** — there is no vendor interface over Bluetooth, and the pad only
+  transmits on input change, so rotation alone sends nothing at all. The relay
+  says so once at startup instead of pretending
 - **other old-dialect models** (Vader 3/4, Direwolf 3/4, Apex 3) share the framing
   but need their own scales — `tools/` is how you measure them
 - no config file yet; behaviour is set by command-line flags

@@ -80,6 +80,35 @@ For reference, the same four paddles reach evdev as `BTN_TRIGGER_HAPPY1`,
 `BTN_TRIGGER_HAPPY3`, `BTN_TRIGGER_HAPPY2` and `BTN_DEAD` — another reason to read
 them from the vendor report instead.
 
+## Bluetooth is a different pad, and a dead end for sensors
+
+Paired over Bluetooth in DInput mode the same hardware arrives as a **single** HID
+device on bus 5 (`0005:04b4:2412`, "Flydigi APEX 4") with a 163-byte descriptor
+and **no vendor collection at all**. The IMU lives in the vendor interface, so
+there is nothing to read it from, and rumble goes the same way: its command is a
+write to an interface that is not there.
+
+Two more things measured rather than assumed:
+
+* **The axes change sign.** Sticks are `-128..127` over Bluetooth and `0..255`
+  through the dongle, with the same pad resting one step below the arithmetic
+  middle either way (`-1` and `127`). Anything hard-coding a neutral of 128 pins
+  the sticks to a corner over Bluetooth — read `EVIOCGABS` instead.
+* **The pad only transmits on input change.** In a 180-second capture, 40 seconds
+  of continuous rotation produced *zero* packets; all 526 arrived in the eleven
+  seconds when sticks and triggers were being moved. So even a sensor field that
+  exists is only sampled when something else happens, which is useless for aiming.
+
+Polling instead of waiting does not help: `HIDIOCGINPUT` on report id 1 succeeds
+and returns an all-zero buffer — not a state snapshot — and takes ~315 ms per call.
+
+**An undeclared tail, unexplained.** The Bluetooth report is 21 bytes where the
+descriptor accounts for 15. Bytes 15–18 hold two 16-bit values that look like
+sensors (one sits near 4096, which would be 1 g at a Vader-era scale), byte 19 is
+a constant `0xa5` — the old dialect's own framing magic — and byte 20 a constant
+1. The kernel ignores all of it; hidraw sees it. What it is remains open, and the
+"only on input change" behaviour is what makes it hard to find out.
+
 ## Command channel
 
 Out: 12 bytes, `[0x05, cmd, args...]`, written to interface 2.

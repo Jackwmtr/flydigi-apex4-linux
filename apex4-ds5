@@ -251,7 +251,9 @@ class PadLink:
         self.forced_node = forced_node
         self.vendor_fd = None
         self.pad_fd = None
+        self.ranges = {}
         self.next_retry = 0.0
+        self.warned_no_vendor = False
 
     def open(self):
         if self.vendor_fd is None:
@@ -263,11 +265,22 @@ class PadLink:
                     print("vendor stream : %s" % node)
                 except OSError:
                     self.vendor_fd = None
+            elif not self.warned_no_vendor:
+                self.warned_no_vendor = True
+                # Over Bluetooth the pad is a single HID device with no vendor
+                # collection at all, so there is nothing to read the IMU from.
+                # Say so once, rather than running as a DualSense whose gyro is
+                # permanently dead for no visible reason.
+                print("no vendor interface -- no gyro or vendor rumble in this "
+                      "mode (Bluetooth?); buttons and sticks still work")
         if self.pad_fd is None:
             node, name, fd = padin.find_pad()
             if fd is not None:
                 self.pad_fd = fd
+                self.ranges = padin.axis_ranges(fd)
                 print("gamepad node  : %s (%s)" % (node, name))
+                print("axis ranges   : %s" % ", ".join(
+                    "%d..%d" % r for r in self.ranges.values()) or "unknown")
         return self.vendor_fd is not None or self.pad_fd is not None
 
     def fds(self):
@@ -363,7 +376,7 @@ def main():
         print("no Apex 4 found -- is the pad on?", file=sys.stderr)
         return 1
 
-    pad = padin.PadState()
+    pad = padin.PadState(link.ranges)
     reading = None
     if args.dump:
         last = 0.0
@@ -457,13 +470,15 @@ def main():
                 continue
             next_send = now + period
             if link.pad_fd is None:
-                pad = padin.PadState()      # neutral while the pad is away
-            state.lx = pad.abs.get(padin.ABS_X, 128)
-            state.ly = pad.abs.get(padin.ABS_Y, 128)
-            state.rx = pad.abs.get(padin.ABS_Z, 128)
-            state.ry = pad.abs.get(padin.ABS_RZ, 128)
-            state.l2 = pad.abs.get(padin.ABS_BRAKE, 0)
-            state.r2 = pad.abs.get(padin.ABS_GAS, 0)
+                pad = padin.PadState(link.ranges)   # neutral while pad is away
+            elif pad.ranges != link.ranges:
+                pad = padin.PadState(link.ranges)   # reconnected, maybe otherwise
+            state.lx = pad.stick(padin.ABS_X)
+            state.ly = pad.stick(padin.ABS_Y)
+            state.rx = pad.stick(padin.ABS_Z)
+            state.ry = pad.stick(padin.ABS_RZ)
+            state.l2 = pad.axis(padin.ABS_BRAKE)
+            state.r2 = pad.axis(padin.ABS_GAS)
             ds5_buttons(state, pad)
             if reading:
                 state.gyro = [
