@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 set -euo pipefail
 
-PREFIX="${XDG_DATA_HOME:-$HOME/.local/share}/flydigi-legacy-ds5"
+PREFIX="${XDG_DATA_HOME:-$HOME/.local/share}/flydigi-apex4"
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 ENV_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/environment.d"
 RULE_SRC="udev/72-apex4-ds5.rules"
@@ -40,8 +40,8 @@ if [ "$check_only" = 1 ]; then
 fi
 
 if [ "$uninstall" = 1 ]; then
-  systemctl --user disable --now flydigi-legacy-ds5 2>/dev/null || true
-  rm -f "$UNIT_DIR/flydigi-legacy-ds5.service" "$ENV_DIR/apex4-ds5.conf"
+  systemctl --user disable --now flydigi-apex4 2>/dev/null || true
+  rm -f "$UNIT_DIR/flydigi-apex4.service" "$ENV_DIR/apex4-ds5.conf"
   rm -rf "$PREFIX"
   systemctl --user daemon-reload || true
   echo "removed. The udev rule needs root:"
@@ -62,8 +62,8 @@ mkdir -p "$PREFIX" "$UNIT_DIR"
 cp -r "$SELF/apex4ds5" "$SELF/apex4-ds5" "$SELF/tools" "$PREFIX/"
 
 echo "==> user service"
-sed "s|%PREFIX%|$PREFIX|g" "$SELF/systemd/flydigi-legacy-ds5.service" \
-  > "$UNIT_DIR/flydigi-legacy-ds5.service"
+sed "s|%PREFIX%|$PREFIX|g" "$SELF/systemd/flydigi-apex4.service" \
+  > "$UNIT_DIR/flydigi-apex4.service"
 systemctl --user daemon-reload
 
 echo "==> udev rule (needs root; this is the only step that does)"
@@ -82,12 +82,15 @@ if [ "$hide_pad" = 1 ]; then
   echo "    Steam must be restarted to pick this up."
 fi
 
+echo "==> default settings file"
+python3 "$PREFIX/apex4-ds5" --write-config || true
+
 echo "==> enabling autostart"
-systemctl --user enable --now flydigi-legacy-ds5
+systemctl --user enable --now flydigi-apex4
 
 echo
-echo "Done. Status:  systemctl --user status flydigi-legacy-ds5"
-echo "Logs:          journalctl --user -u flydigi-legacy-ds5 -f"
+echo "Done. Status:  systemctl --user status flydigi-apex4"
+echo "Logs:          journalctl --user -u flydigi-apex4 -f"
 if [ "$hide_pad" = 1 ]; then
   echo
   echo "Note: with --hide-pad, stopping the relay leaves no controller at all."

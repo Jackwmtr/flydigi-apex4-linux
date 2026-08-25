@@ -14,10 +14,16 @@ This reads them and relays the pad into a virtual DualSense on `/dev/uhid`, wher
 the kernel's `hid-playstation` picks it up as a genuine PS5 controller. A game then
 gets gyro, analogue triggers and rumble with no Steam Input in the path.
 
-**The measurements are the point of this repository**, more than the code:
-[docs/PROTOCOL.md](docs/PROTOCOL.md) has the report map, the per-axis sensor scales
-and what each one is anchored by. The code can be rewritten by anyone holding the
-pad; the constants took a session of turning a gamepad in the air.
+**The measurements are the point of this repository**, more than the code. The
+code can be rewritten by anyone holding the pad; the constants took a session of
+turning a gamepad in the air.
+
+| Document | What is in it |
+|---|---|
+| [docs/PROTOCOL.md](docs/PROTOCOL.md) | the pad: interfaces, report map, command channel, calibration, what Bluetooth can and cannot do |
+| [docs/DUALSENSE.md](docs/DUALSENSE.md) | the emulation side: uhid, feature reports, report layouts, rumble, udev, and the traps in each |
+| [docs/DSX.md](docs/DSX.md) | adaptive triggers — the part that is *not* done, and the route to it |
+| [docs/CONTINUE.md](docs/CONTINUE.md) | state of play, method, the measurement kit, next steps |
 
 ## Status
 
@@ -42,7 +48,6 @@ Not done, honestly listed:
   says so once at startup instead of pretending
 - **other old-dialect models** (Vader 3/4, Direwolf 3/4, Apex 3) share the framing
   but need their own scales — `tools/` is how you measure them
-- no config file yet; behaviour is set by command-line flags
 - wired (cable) mode not yet verified — everything here was measured on the dongle
 
 ## Requirements
@@ -81,12 +86,17 @@ systemctl --user enable --now flydigi-legacy-ds5      # installed by install.sh
 Or by hand, which is how you try things out:
 
 ```sh
+./apex4-ds5 --write-config               # settings file, then edit it
 ./apex4-ds5 --dump                       # decode and print, create no device
 ./apex4-ds5 --calib                      # the constants, and what the served
                                          # DualSense calibration implies
 ./apex4-ds5 --paddles "l3,r3,tp-left,tp-right"
 ./apex4-ds5 --gyro-map "pitch,yaw,-roll" # a minus inverts that axis
 ```
+
+Settings live in `~/.config/flydigi-apex4/config.json` — paddle assignments, axis
+maps, report rate. Flags override the file, so anything can be tried without
+editing it.
 
 If the motors ever stick on: `tools/rumble-off.py` works with the relay stopped.
 

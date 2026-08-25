@@ -21,7 +21,7 @@ those carry an inputtino attribution of their own, see NOTICE-openflydigi.
 import argparse, os, select, signal, struct, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from apex4ds5 import legacy, padin
+from apex4ds5 import config, legacy, padin
 from apex4ds5._ds5 import ds5, ds5_usb, uhid
 
 DS_GYRO_RES_PER_DEG_S = 1024
@@ -39,8 +39,7 @@ DS_ACC_RES_PER_G = 8192
 # side the pad was resting on in the calibration poses, and that rests on pose
 # labels rather than on anything measured -- so they are options here, to be
 # fixed by a guided tilt test rather than asserted.
-ACCEL_MAP_DEFAULT = "-x,z,y"
-GYRO_MAP_DEFAULT = "pitch,yaw,roll"
+
 
 
 def parse_map(spec, names):
@@ -335,27 +334,51 @@ def main():
     ap.add_argument("--node", help="vendor hidraw node (default: autodetect)")
     ap.add_argument("--dump", action="store_true", help="print readings, create no device")
     ap.add_argument("--calib", action="store_true", help="show the served calibration's implications")
-    ap.add_argument("--rate", type=float, default=250.0, help="DualSense report rate, Hz")
+    ap.add_argument("--rate", type=float, help="DualSense report rate, Hz")
     ap.add_argument("--verbose", action="store_true", help="log output reports (rumble, triggers)")
-    ap.add_argument("--accel-map", default=ACCEL_MAP_DEFAULT,
-                    help="pad->DualSense accel axes, e.g. %s" % ACCEL_MAP_DEFAULT)
-    ap.add_argument("--gyro-map", default=GYRO_MAP_DEFAULT,
-                    help="pad->DualSense gyro axes, e.g. %s" % GYRO_MAP_DEFAULT)
-    ap.add_argument("--paddles", default="tp-left,l3,r3,tp-right",
+    ap.add_argument("--accel-map", help="pad->DualSense accel axes, e.g. -x,z,y")
+    ap.add_argument("--gyro-map", help="pad->DualSense gyro axes, e.g. pitch,yaw,-roll")
+    ap.add_argument("--paddles",
                     help="what M1..M4 (left to right) do; one of %s"
                          % "|".join(PADDLE_TARGETS))
+    ap.add_argument("--config", help="settings file (default: ~/.config/%s/config.json)"
+                                     % config.APP)
+    ap.add_argument("--write-config", action="store_true",
+                    help="write a default settings file and exit")
     args = ap.parse_args()
 
     # systemd stops services with SIGTERM, whose default action skips `finally`
     # entirely -- so without this the motors keep running after the unit stops.
     signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
 
+    if args.write_config:
+        target, written = config.write_default(args.config)
+        print("%s %s" % ("wrote" if written else "already exists:", target))
+        return 0
+
+    settings, source = config.load(args.config)
+    # Flags win over the file, so anything can be tried without editing it.
+    if args.accel_map:
+        settings["accel_map"] = args.accel_map
+    if args.gyro_map:
+        settings["gyro_map"] = args.gyro_map
+    if args.paddles:
+        settings["paddles"] = [p.strip() for p in args.paddles.split(",")]
+    if args.rate:
+        settings["rate_hz"] = args.rate
+    if args.verbose:
+        settings["verbose"] = True
+    verbose = settings["verbose"]
+    if source and verbose:
+        print("settings      : %s" % source)
+
     gyro_f, accel_f = calibration_factors()
-    accel_map = parse_map(args.accel_map, ["x", "y", "z"])
-    paddle_targets = [p.strip() for p in args.paddles.split(",")]
+    accel_map = parse_map(settings["accel_map"], ["x", "y", "z"])
+    gyro_map = parse_map(settings["gyro_map"], ["pitch", "yaw", "roll"])
+    paddle_targets = list(settings["paddles"])
     if len(paddle_targets) != 4 or any(p not in PADDLE_TARGETS for p in paddle_targets):
-        raise SystemExit("--paddles needs four of %s" % "|".join(PADDLE_TARGETS))
-    gyro_map = parse_map(args.gyro_map, ["pitch", "yaw", "roll"])
+        raise SystemExit("paddles needs exactly four of %s, got %r"
+                         % ("|".join(PADDLE_TARGETS), paddle_targets))
     if args.calib:
         print("served DualSense calibration implies:")
         for name, f in zip(("pitch", "yaw", "roll"), gyro_f):
@@ -422,7 +445,7 @@ def main():
     print("virtual DualSense created; waiting for the kernel to bind it")
     state = ds5.InputState()
     last_rumble = (0, 0)
-    period = 1.0 / args.rate
+    period = 1.0 / settings["rate_hz"]
     next_send = time.monotonic()
     t0 = time.monotonic()
     try:
@@ -450,7 +473,7 @@ def main():
             for rtype, payload in dev.poll():
                 if not payload:
                     continue
-                if args.verbose:
+                if verbose:
                     print("output report: %s" % payload[:16].hex(" "))
                 out = ds5.parse_output(payload)
                 rumble = out["rumble"]
@@ -459,8 +482,8 @@ def main():
                 if rumble is not None:
                     if rumble != last_rumble:
                         last_rumble = rumble
-                        send_rumble(link, rumble, args.verbose)
-                if args.verbose and out["effects"]:
+                        send_rumble(link, rumble, verbose)
+                if verbose and out["effects"]:
                     print("trigger effects: %s" % out["effects"])
 
 

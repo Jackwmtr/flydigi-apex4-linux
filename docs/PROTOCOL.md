@@ -237,3 +237,64 @@ Notes that cost time, for anyone taking the same route:
 * **Why the vendor stream was once static** for minutes.
 * Everything about **other old-dialect models**. The framing is shared; the scales
   and offsets are per-model and must be measured. `tools/` is how.
+
+## Appendix: report descriptors, verbatim
+
+So that another pad, or another connection mode, can be compared against these
+without having this one in hand.
+
+**Dongle / wired, interface 0 (gamepad), 125 bytes** — sticks X/Y/Z/Rz 8-bit, a
+4-bit hat, one Consumer bit, 19 buttons, then Simulation-page Brake and
+Accelerator as the analogue triggers:
+
+```
+05 01 09 05 a1 01 75 08 95 04 15 00 26 ff 00 35 00 46 ff 00 09 30 09 31 09 32
+09 35 81 02 75 04 95 01 25 07 46 3b 01 65 14 09 39 81 42 65 00 25 01 45 01 05
+0c 09 69 75 01 95 01 81 02 05 09 09 14 09 13 09 12 09 11 09 10 09 0f 09 0e 09
+0c 09 0b 09 0a 09 09 09 08 09 07 09 06 09 05 09 04 09 03 09 02 09 01 75 01 95
+13 81 02 05 02 15 00 26 ff 00 09 c5 09 c4 95 02 75 08 81 02 c0
+```
+
+**Dongle / wired, interface 2 (vendor), 44 bytes** — usage page `0xFFA0`, input
+report `0x04` of 31 bytes plus id, output report `0x05` likewise. This is where the
+IMU and the command channel live:
+
+```
+06 a0 ff 09 01 a1 01 09 03 85 04 15 80 25 7f 35 00 45 ff 75 08 95 1f 81 02 09
+05 85 05 15 80 25 7f 35 00 45 ff 75 08 95 1f 91 02 c0
+```
+
+Interface 1 is a mouse (silent unless the pad's own gyro-mouse mode is on) and
+interface 3 another vendor collection on page `0xFFEE`, report `0x05`, 63 bytes,
+not investigated.
+
+**Bluetooth, 163 bytes** — one device, no vendor collection anywhere, sticks
+**signed** this time, and note the four `0x40`–`0x43` axes that are always zero:
+
+```
+05 01 09 05 a1 01 85 01 a1 02 09 30 09 31 09 32 09 35 15 80 25 7f 35 80 45 7f
+75 08 95 04 81 02 09 40 09 41 09 42 09 43 15 00 26 ff 00 75 08 95 04 81 02 75
+04 95 01 15 01 25 08 46 3b 01 65 14 09 39 81 42 65 00 05 09 95 0c 75 01 25 01
+15 00 09 01 09 02 09 04 09 05 09 07 09 08 09 09 09 0a 09 0b 09 0c 09 0e 09 0f
+81 02 05 0c 09 36 09 84 09 b8 09 9c 09 9d 09 89 09 8d 09 65 09 82 09 8a 75 01
+95 0f 81 02 05 0c 09 69 75 01 95 01 81 02 05 02 15 00 26 ff 00 09 c5 09 c4 95
+02 75 08 81 02 c0 c0
+```
+
+The descriptor accounts for 15 bytes; the pad sends 21. See the Bluetooth section
+above for the tail.
+
+## Appendix: identity reply, annotated
+
+One real reply to command 236, from this pad on its dongle:
+
+```
+04 ff f0 54 00 07 ce 96 54 35 68 04 02 00 02 ec 00 00 e3 00 ...
+      ^^ ^^    ^^^^^^^^^^^ ^^ ^^ ^^ ^^ ^^ ^^ ^^
+      |  |     MAC         fw    |  |  |  |  echo 0xEC = 236
+      |  DeviceType 84 = Apex 4  |  |  |  connection 2 = wireless
+      |                          |  |  (byte 13, meaning unknown)
+      |                          |  CPU 2 = wch ch573
+      |                          battery level 4 of 5
+      (byte 2, meaning unknown)
+```
