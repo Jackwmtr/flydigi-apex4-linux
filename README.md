@@ -1,0 +1,112 @@
+# flydigi-legacy-ds5
+
+Gyroscope and analogue triggers from a **Flydigi Apex 4** on Linux, by presenting
+it to games as a DualSense.
+
+Flydigi's older pads (Apex 3/4, Vader 3/4, Direwolf 3/4) carry a 6-axis IMU that
+nothing on Linux reads. SDL recognises the Apex 4, its paddles and its rumble, but
+not its sensors; Flydigi's own Windows app is the only thing that ever exposed
+them, and openflydigi — the good Linux tool for these pads — covers the *newer*
+protocol generation only. So the sensors sit in a vendor HID interface that is
+already open and nobody parses.
+
+This reads them and relays the pad into a virtual DualSense on `/dev/uhid`, where
+the kernel's `hid-playstation` picks it up as a genuine PS5 controller. A game then
+gets gyro, analogue triggers and rumble with no Steam Input in the path.
+
+**The measurements are the point of this repository**, more than the code:
+[docs/PROTOCOL.md](docs/PROTOCOL.md) has the report map, the per-axis sensor scales
+and what each one is anchored by. The code can be rewritten by anyone holding the
+pad; the constants took a session of turning a gamepad in the air.
+
+## Status
+
+Works, in daily use on one pad. Specifically:
+
+- gyro, all three axes, no enable command, gyro-mouse off, 1000 Hz
+- analogue triggers, sticks, hat, face buttons, shoulders, stick clicks
+- the four back paddles, which DS mode has nowhere to put: two become touchpad
+  halves, two become stick clicks, configurable
+- the Home key as the PS button (it is a Consumer-page usage, not a gamepad button)
+- rumble both ways, two motors independently
+- survives the pad sleeping, being switched off, and coming back
+
+Not done, honestly listed:
+
+- **adaptive triggers** — the pad has them, the command family for this model is
+  not publicly known, nothing here drives them
+- **the roll sign** is unconfirmed; pitch and yaw were fixed empirically in a game
+- **Bluetooth modes** untested
+- **other old-dialect models** (Vader 3/4, Direwolf 3/4, Apex 3) share the framing
+  but need their own scales — `tools/` is how you measure them
+- no config file yet; behaviour is set by command-line flags
+- wired (cable) mode not yet verified — everything here was measured on the dongle
+
+## Requirements
+
+Linux with `uhid` and `hid_playstation` (any kernel since 5.12), `python3`, and
+**no dependencies at all** — the whole thing is standard library, which is
+deliberate: on an immutable distribution, a `pip install` line in the instructions
+costs somebody an evening.
+
+## Install
+
+```sh
+git clone https://github.com/Jackwmtr/flydigi-apex4-linux
+cd flydigi-legacy-ds5
+./install.sh --check          # diagnose only, changes nothing
+./install.sh                  # add --hide-pad to hide the physical pad from Steam
+```
+
+`--check` is the part that matters on a machine that is not mine: it reports which
+of the four things failed rather than "it does not work" — is the pad there and is
+it this model, is the vendor node readable, is `/dev/uhid` writable, are the kernel
+modules present. Then it brings a virtual DualSense up briefly and watches whether
+the sensors move, so the whole chain is tested rather than the file list.
+
+`--hide-pad` writes an `environment.d` file that hides the physical pad from SDL,
+so Steam offers only the virtual DualSense and Steam Input can stay on. **It is
+only safe together with the autostart unit**: with the pad hidden and the relay
+not running, there is no controller at all.
+
+## Run
+
+```sh
+systemctl --user enable --now flydigi-legacy-ds5      # installed by install.sh
+```
+
+Or by hand, which is how you try things out:
+
+```sh
+./apex4-ds5 --dump                       # decode and print, create no device
+./apex4-ds5 --calib                      # the constants, and what the served
+                                         # DualSense calibration implies
+./apex4-ds5 --paddles "l3,r3,tp-left,tp-right"
+./apex4-ds5 --gyro-map "pitch,yaw,-roll" # a minus inverts that axis
+```
+
+If the motors ever stick on: `tools/rumble-off.py` works with the relay stopped.
+
+## Not an Apex 4?
+
+The framing in [docs/PROTOCOL.md](docs/PROTOCOL.md) is shared across the old
+generation, but **the sensor scales are per-model** and differ by more than 3×
+between axes on this one pad alone. Running with the wrong constants gives a gyro
+that quietly lies, which is worse than one that does not work. `tools/` contains
+what was used here: probe the interfaces, capture the stream, fit the
+accelerometer, integrate known rotations for the gyro.
+
+Patches adding a model are welcome; patches adding one *without* measured constants
+are not.
+
+## Credit
+
+`apex4ds5/_ds5/` is vendored from [openflydigi](https://github.com/mkaliaha/openflydigi)
+(MIT, Mikalai Kaliaha) — the `/dev/uhid` binding, the DualSense report codec and the
+descriptors captured off real hardware. That project carries an inputtino attribution
+of its own; see `apex4ds5/_ds5/NOTICE`. Everything else here is MIT, see `LICENSE`.
+
+Bug found in it while doing this, worth passing on: its `motion.py` hard-codes
+`DS5_ACCEL_RAW_PER_G = 10000` citing inputtino, but the blob shipped in its own
+`ds5_usb.py` — captured off real hardware — implies 8192, so its accelerometer
+reads about 22% low.

@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: CC0-1.0
+# Access for the Apex 4 vendor interface and for a virtual DualSense's sub-devices.
+#
+#   sudo cp 72-apex4-ds5.rules /etc/udev/rules.d/ && sudo udevadm control --reload
+#   sudo udevadm trigger
+#
+# Numbered below 73 on purpose: TAG+="uaccess" only sets a tag, and what acts on
+# it is systemd's own 73-seat-late.rules. A 99- file sets the tag after the rule
+# that would have read it, so it does nothing at all.
+
+# The pad's vendor HID interface -- gyro, accelerometer, analogue triggers.
+KERNEL=="hidraw*", ATTRS{idVendor}=="04b4", ATTRS{idProduct}=="2412", TAG+="uaccess"
+
+# /dev/uhid, to create the virtual DualSense in the first place.
+KERNEL=="uhid", TAG+="uaccess"
+
+# The virtual DualSense's sub-devices. systemd tags the main gamepad node by
+# itself, but leaves motion sensors, touchpad and headset jack as root:input --
+# so gyro is unreadable and touchpad-click is silently dead. Matched by the
+# DualSense ids rather than by name, so it holds whatever the emulator calls
+# the device; a real DualSense matches too, which is harmless.
+SUBSYSTEM=="input", ATTRS{id/vendor}=="054c", ATTRS{id/product}=="0ce6", TAG+="uaccess"

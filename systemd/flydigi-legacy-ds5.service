@@ -1,0 +1,12 @@
+[Unit]
+Description=Flydigi Apex 4 as a virtual DualSense
+# Deliberately does not wait for the pad: the relay tolerates it being absent and
+# picks it up whenever it appears, so the virtual controller survives a nap.
+
+[Service]
+ExecStart=/usr/bin/python3 -u %PREFIX%/apex4-ds5
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

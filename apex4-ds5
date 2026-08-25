@@ -1,0 +1,494 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+"""Present a Flydigi Apex 4 to games as a DualSense, with real gyro.
+
+Buttons and sticks come from the pad's ordinary evdev node; the IMU comes from
+its vendor HID interface, which no kernel driver decodes. Both are relayed into
+a virtual DualSense on /dev/uhid, where hid-playstation picks it up -- so a game
+sees a PS5 pad with working motion, no Steam Input in the path.
+
+The DualSense report units are not free parameters: hid-playstation normalises
+sensors using the calibration feature report the device serves. This program
+parses that blob exactly as the kernel does and derives the conversion from it,
+rather than hard-coding a constant that a different blob would silently break.
+
+  --dump     decode and print, create no device (start here)
+  --calib    print what the served calibration implies, and exit
+
+Uses flydigi/{uhid,ds5,ds5_usb}.py from openflydigi (MIT, Mikalai Kaliaha);
+those carry an inputtino attribution of their own, see NOTICE-openflydigi.
+"""
+import argparse, os, select, signal, struct, sys, time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from apex4ds5 import legacy, padin
+from apex4ds5._ds5 import ds5, ds5_usb, uhid
+
+DS_GYRO_RES_PER_DEG_S = 1024
+DS_ACC_RES_PER_G = 8192
+
+# Axis order and signs, pad frame -> DualSense frame.
+#
+# SDL hands a real DualSense's sensor axes to games in the order the hardware
+# reports them, with no reordering or sign flips, so the DualSense frame is the
+# one SDL documents: +X right, +Y up (a pad at rest reads +1 g on Y), +Z toward
+# the player. The Apex 4 lying flat face up reads its gravity on Z, so its Z is
+# the "up" axis and belongs in the DualSense's Y.
+#
+# What is NOT settled: the two remaining signs. Those follow from which physical
+# side the pad was resting on in the calibration poses, and that rests on pose
+# labels rather than on anything measured -- so they are options here, to be
+# fixed by a guided tilt test rather than asserted.
+ACCEL_MAP_DEFAULT = "-x,z,y"
+GYRO_MAP_DEFAULT = "pitch,yaw,roll"
+
+
+def parse_map(spec, names):
+    """"-x,z,y" -> [(index, sign), ...] over `names`."""
+    out = []
+    for token in spec.split(","):
+        token = token.strip()
+        sign = -1.0 if token.startswith("-") else 1.0
+        key = token.lstrip("+-")
+        if key not in names:
+            raise SystemExit("unknown axis %r, expected one of %s" % (key, ", ".join(names)))
+        out.append((names.index(key), sign))
+    if len(out) != 3:
+        raise SystemExit("axis map needs exactly three entries, got %r" % spec)
+    return out
+
+
+def calibration_blob():
+    return neutral_calibration(ds5_usb.FEATURE_REPORTS[0x05])
+
+
+def calibration_factors():
+    """Per-axis (raw per deg/s) and (raw per g, bias), read off the served blob.
+
+    Mirrors ds_get_calibration_data(): the kernel indexes from buf[1] because
+    buf[0] is the report id, and the blob here is stored without it.
+    """
+    blob = calibration_blob()
+
+    def s16(i):
+        return struct.unpack_from("<h", blob, i)[0]
+
+    gyro_bias = (s16(0), s16(2), s16(4))
+    gyro_plus = (s16(6), s16(10), s16(14))
+    gyro_minus = (s16(8), s16(12), s16(16))
+    speed_2x = s16(18) + s16(20)
+    gyro = []
+    for i in range(3):
+        denom = abs(gyro_plus[i] - gyro_bias[i]) + abs(gyro_minus[i] - gyro_bias[i])
+        # deg/s = raw * (speed_2x * RES / denom) / RES  =>  raw = deg/s * denom / speed_2x
+        gyro.append(denom / speed_2x if speed_2x else 0.0)
+
+    accel = []
+    for i in range(3):
+        plus, minus = s16(22 + i * 4), s16(24 + i * 4)
+        range_2g = plus - minus
+        bias = plus - range_2g // 2
+        accel.append((range_2g / 2.0, bias))
+    return gyro, accel
+
+
+# Touchpad geometry as SDL reads it off a real DualSense.
+TOUCHPAD_W, TOUCHPAD_H = 1920, 1080
+TOUCH_POINT_OFFSET = 33          # first touch point in the input report
+PADDLE_TARGETS = ("tp-left", "tp-right", "l3", "r3", "none")
+
+
+def apply_touch(report, x, y):
+    """Mark touch point 0 as a contact at (x, y).
+
+    The DualSense touchpad is one physical button, so "left click" and "right
+    click" are not two buttons -- they are the same button with the contact on
+    one side or the other, which is how games and Steam tell them apart. Layout
+    per the kernel's dualsense_touch_point: contact, x_lo, x_hi:y_lo, y_hi.
+    """
+    report[TOUCH_POINT_OFFSET] = 0x00                       # active, id 0
+    report[TOUCH_POINT_OFFSET + 1] = x & 0xFF
+    report[TOUCH_POINT_OFFSET + 2] = ((y & 0x0F) << 4) | ((x >> 8) & 0x0F)
+    report[TOUCH_POINT_OFFSET + 3] = (y >> 4) & 0xFF
+
+
+def apply_paddles(report, state, paddles, targets):
+    """Fold the four back paddles into DualSense inputs.
+
+    They are read from the vendor report's byte 7 rather than from evdev, so the
+    pad's own profile cannot remap them out from under us. DS mode has nowhere to
+    put them natively, hence this: two as touchpad halves, two as stick clicks.
+    """
+    touch = None
+    for pressed, target in zip(paddles, targets):
+        if not pressed:
+            continue
+        if target == "l3":
+            report[9] |= ds5.L3
+        elif target == "r3":
+            report[9] |= ds5.R3
+        elif target == "tp-left":
+            touch = (TOUCHPAD_W // 4, TOUCHPAD_H // 2)
+        elif target == "tp-right":
+            touch = (TOUCHPAD_W * 3 // 4, TOUCHPAD_H // 2)
+    if touch:
+        report[10] |= ds5.TOUCHPAD
+        apply_touch(report, *touch)
+
+
+# A held rumble level is NOT re-asserted. An earlier version refreshed it every
+# half second so that a long effect could not fade out -- and that turned a
+# missed stop command into rumble that outlived Steam, the pad being switched
+# off, and every reconnect, because the refresh loop had become the only thing
+# driving it. A real DualSense holds the level until told otherwise, so
+# forwarding each report once is both simpler and correct.
+#
+# There is no watchdog either, and that was measured rather than assumed: the
+# kernel sends a level once and its stop only when the effect ends, so a timeout
+# of any length truncates legitimate rumble. A one-second watchdog cut a
+# two-second effect in half.
+#
+# What replaces both is recognising a stop properly -- see is_rumble_stop().
+
+
+def is_rumble_stop(payload):
+    """Is this output report a stop that parse_output cannot see as one?
+
+    A stop normally arrives with the motor validity flags set and both levels at
+    zero, which parse_output handles. Steam sends something else: a report with
+    *no* validity bits at all and zero motors. Read as "no information" -- which
+    is what it literally is -- that leaves the last level standing forever, which
+    is how rumble outlived Steam being closed.
+    
+    Reports that carry other validity bits (lightbar, mic LED) are deliberately
+    NOT treated as stops even with zero motor bytes: those are unrelated updates
+    that a game can send in the middle of a legitimate long rumble.
+    """
+    if not payload or payload[0] not in (ds5.DS_OUTPUT_REPORT_USB,
+                                         ds5.DS_OUTPUT_REPORT_BT):
+        return False
+    base = 1 if payload[0] == ds5.DS_OUTPUT_REPORT_USB else 2
+    if len(payload) < base + 4:
+        return False
+    flag0, flag1 = payload[base], payload[base + 1]
+    motors = payload[base + 2] or payload[base + 3]
+    return not flag0 and not flag1 and not motors
+
+
+def zero_rumble(link):
+    """Silence the motors, best effort -- used on exit and on losing the pad."""
+    if link.vendor_fd is None:
+        return
+    try:
+        os.write(link.vendor_fd, legacy.haptic_packet(0, 0))
+    except OSError:
+        pass
+
+
+def send_rumble(link, rumble, verbose=False):
+    """Forward a DualSense rumble level to the pad's own haptic command.
+
+    The DualSense report carries two 8-bit motor levels and the old dialect's
+    haptic command takes exactly that, so this is a straight pass-through. It
+    goes to the vendor interface -- the same node the IMU is read from, which is
+    why that one is opened read-write.
+    """
+    if link.vendor_fd is None:
+        return
+    left, right = rumble
+    try:
+        os.write(link.vendor_fd, legacy.haptic_packet(left, right))
+        if verbose:
+            print("rumble -> pad: left %3d right %3d" % (left, right))
+    except OSError as exc:
+        print("rumble write failed: %s" % exc, file=sys.stderr)
+        link.drop("vendor_fd")
+
+
+def neutral_calibration(blob):
+    """The served calibration, with every zero-offset field zeroed.
+
+    The blob is a capture off somebody's real DualSense, and it carries that
+    unit's sensor offsets -- including a gyro yaw bias of 10. The kernel throws
+    those away (it hard-codes bias 0), but **SDL does not**: it computes
+    (value - bias) * sensitivity itself, so a relay that already reports a
+    calibrated zero gets 10 subtracted from it and yaw creeps at about 0.6 deg/s
+    forever. That is a drift on yaw only, which is exactly what it looks like in
+    a game with gyro-to-mouse on.
+    
+    The scales are what we want to keep, so plus/minus pairs are made symmetric
+    about zero at their existing magnitude rather than replaced: sensitivity is
+    derived from their span, and calibration_factors() reads it back out of this
+    same blob, so both stay in step by construction.
+    """
+    out = bytearray(blob)
+
+    def s16(i):
+        return struct.unpack_from("<h", out, i)[0]
+
+    for i in (0, 2, 4):                      # gyro pitch/yaw/roll bias
+        struct.pack_into("<h", out, i, 0)
+    for plus_off, minus_off in ((6, 8), (10, 12), (14, 16),        # gyro spans
+                                (22, 24), (26, 28), (30, 32)):     # accel spans
+        half = (abs(s16(plus_off)) + abs(s16(minus_off))) // 2
+        struct.pack_into("<h", out, plus_off, half)
+        struct.pack_into("<h", out, minus_off, -half)
+    return bytes(out)
+
+
+class PadLink:
+    """The pad, held loosely enough to survive it leaving the USB bus.
+
+    A pad that sleeps or is switched off takes its hidraw and evdev nodes with
+    it, and comes back under different node numbers. Opening both once and
+    reading them for a session means the relay dies the first time the pad naps
+    -- and it takes the virtual DualSense with it, so the game loses the
+    controller it was holding. Here the uhid device outlives the pad: readings
+    freeze, then resume when the nodes reappear.
+    """
+
+    def __init__(self, forced_node=None):
+        self.forced_node = forced_node
+        self.vendor_fd = None
+        self.pad_fd = None
+        self.next_retry = 0.0
+
+    def open(self):
+        if self.vendor_fd is None:
+            node = self.forced_node or legacy.find_vendor_node()
+            if node:
+                try:
+                    # O_RDWR: the same interface carries rumble back to the pad.
+                    self.vendor_fd = os.open(node, os.O_RDWR | os.O_NONBLOCK)
+                    print("vendor stream : %s" % node)
+                except OSError:
+                    self.vendor_fd = None
+        if self.pad_fd is None:
+            node, name, fd = padin.find_pad()
+            if fd is not None:
+                self.pad_fd = fd
+                print("gamepad node  : %s (%s)" % (node, name))
+        return self.vendor_fd is not None or self.pad_fd is not None
+
+    def fds(self):
+        return [fd for fd in (self.vendor_fd, self.pad_fd) if fd is not None]
+
+    def drop(self, which):
+        fd = getattr(self, which)
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            setattr(self, which, None)
+            print("%s went away; waiting for it to come back" % which)
+
+    def retry(self, now):
+        """Re-open whatever is missing, but not on every loop iteration."""
+        if self.vendor_fd is not None and self.pad_fd is not None:
+            return
+        if now < self.next_retry:
+            return
+        self.next_retry = now + 1.0
+        self.open()
+
+
+# The pad's face buttons: measured, not assumed. The kernel hands out BTN_NORTH
+# and BTN_WEST in the order the descriptor lists its buttons, and this pad lists
+# them the other way round -- with the textbook mapping, X produced Triangle and
+# Y produced Square. So north is Square here and west is Triangle.
+def ds5_buttons(state, pad):
+    state.buttons0 = state.buttons1 = state.buttons2 = 0
+    state.set(ds5.CROSS, 0, pad.down(padin.BTN_SOUTH))
+    state.set(ds5.CIRCLE, 0, pad.down(padin.BTN_EAST))
+    state.set(ds5.SQUARE, 0, pad.down(padin.BTN_NORTH))
+    state.set(ds5.TRIANGLE, 0, pad.down(padin.BTN_WEST))
+    state.set(ds5.L1, 1, pad.down(padin.BTN_TL))
+    state.set(ds5.R1, 1, pad.down(padin.BTN_TR))
+    state.set(ds5.L2, 1, pad.down(padin.BTN_TL2) or state.l2 > 0)
+    state.set(ds5.R2, 1, pad.down(padin.BTN_TR2) or state.r2 > 0)
+    state.set(ds5.CREATE, 1, pad.down(padin.BTN_SELECT))
+    state.set(ds5.OPTIONS, 1, pad.down(padin.BTN_START))
+    state.set(ds5.L3, 1, pad.down(padin.BTN_THUMBL))
+    state.set(ds5.R3, 1, pad.down(padin.BTN_THUMBR))
+    # PS_HOME is set from the vendor report instead, in the loop: the Home key
+    # is a Consumer-page usage on this pad, so it never appears as BTN_MODE.
+    state.hat = ds5.hat_from_dpad(pad.abs.get(padin.ABS_HAT0X, 0),
+                                  pad.abs.get(padin.ABS_HAT0Y, 0))
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--node", help="vendor hidraw node (default: autodetect)")
+    ap.add_argument("--dump", action="store_true", help="print readings, create no device")
+    ap.add_argument("--calib", action="store_true", help="show the served calibration's implications")
+    ap.add_argument("--rate", type=float, default=250.0, help="DualSense report rate, Hz")
+    ap.add_argument("--verbose", action="store_true", help="log output reports (rumble, triggers)")
+    ap.add_argument("--accel-map", default=ACCEL_MAP_DEFAULT,
+                    help="pad->DualSense accel axes, e.g. %s" % ACCEL_MAP_DEFAULT)
+    ap.add_argument("--gyro-map", default=GYRO_MAP_DEFAULT,
+                    help="pad->DualSense gyro axes, e.g. %s" % GYRO_MAP_DEFAULT)
+    ap.add_argument("--paddles", default="tp-left,l3,r3,tp-right",
+                    help="what M1..M4 (left to right) do; one of %s"
+                         % "|".join(PADDLE_TARGETS))
+    args = ap.parse_args()
+
+    # systemd stops services with SIGTERM, whose default action skips `finally`
+    # entirely -- so without this the motors keep running after the unit stops.
+    signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
+
+    gyro_f, accel_f = calibration_factors()
+    accel_map = parse_map(args.accel_map, ["x", "y", "z"])
+    paddle_targets = [p.strip() for p in args.paddles.split(",")]
+    if len(paddle_targets) != 4 or any(p not in PADDLE_TARGETS for p in paddle_targets):
+        raise SystemExit("--paddles needs four of %s" % "|".join(PADDLE_TARGETS))
+    gyro_map = parse_map(args.gyro_map, ["pitch", "yaw", "roll"])
+    if args.calib:
+        print("served DualSense calibration implies:")
+        for name, f in zip(("pitch", "yaw", "roll"), gyro_f):
+            print("  gyro %-5s : %8.3f raw per deg/s" % (name, f))
+        for name, (half, bias) in zip(("X", "Y", "Z"), accel_f):
+            print("  accel %-4s : %8.1f raw per g, bias %d" % (name, half, bias))
+        print("\nApex 4 measured scales:")
+        for name, v in legacy.GYRO_DEG_PER_LSB.items():
+            print("  gyro %-5s : %.3f deg/s per pad LSB" % (name, v))
+        for name, scale, bias in zip("XYZ", legacy.ACCEL_LSB_PER_G, legacy.ACCEL_BIAS):
+            print("  accel %-4s: %.1f pad LSB per g, bias %+.1f" % (name, scale, bias))
+        print("  gyro signs: %s (the pad's axes are not right-handed w.r.t. its own"
+              " accel frame)" % legacy.GYRO_SIGN)
+        return 0
+
+    link = PadLink(args.node)
+    if not link.open():
+        print("no Apex 4 found -- is the pad on?", file=sys.stderr)
+        return 1
+
+    pad = padin.PadState()
+    reading = None
+    if args.dump:
+        last = 0.0
+        while True:
+            select.select(link.fds(), [], [], 0.05)
+            link.retry(time.monotonic())
+            if link.vendor_fd is not None:
+                try:
+                    while True:
+                        data = os.read(link.vendor_fd, 64)
+                        if legacy.is_input(data) and legacy.command_echo(data) is None:
+                            reading = legacy.Reading(data)
+                except BlockingIOError:
+                    pass
+                except OSError:
+                    link.drop("vendor_fd")
+                    reading = None
+                    last_rumble = (0, 0)
+            if link.pad_fd is not None:
+                try:
+                    pad.feed(link.pad_fd)
+                except OSError:
+                    link.drop("pad_fd")
+            now = time.monotonic()
+            if reading and now - last > 0.1:
+                last = now
+                print("gyro %7.1f %7.1f %7.1f deg/s | accel %6.2f %6.2f %6.2f g | "
+                      "L2 %3d R2 %3d | paddles %s | sticks %3d,%3d %3d,%3d"
+                      % (reading.gyro_deg_s + reading.accel_g +
+                         (reading.l2, reading.r2,
+                          "".join("1" if p else "0" for p in reading.paddles),
+                          pad.abs.get(padin.ABS_X, 128), pad.abs.get(padin.ABS_Y, 128),
+                          pad.abs.get(padin.ABS_Z, 128), pad.abs.get(padin.ABS_RZ, 128))))
+
+    # The blobs are stored without their report id; a HID feature read must
+    # return it as the first byte, and the kernel checks the length exactly --
+    # serving them raw costs one byte and fails probe with "expected 20 got 19".
+    features = {num: bytes([num]) + blob
+                for num, blob in ds5_usb.FEATURE_REPORTS.items()}
+    features[0x05] = bytes([0x05]) + calibration_blob()
+    dev = uhid.Device("Apex 4 (DualSense)", ds5_usb.VENDOR_ID, ds5_usb.PRODUCT_ID,
+                      ds5_usb.REPORT_DESC, feature_reports=features)
+    print("virtual DualSense created; waiting for the kernel to bind it")
+    state = ds5.InputState()
+    last_rumble = (0, 0)
+    period = 1.0 / args.rate
+    next_send = time.monotonic()
+    t0 = time.monotonic()
+    try:
+        while True:
+            select.select(link.fds() + [dev.fd], [], [], period)
+            now_retry = time.monotonic()
+            link.retry(now_retry)
+            if link.vendor_fd is not None:
+                try:
+                    while True:
+                        data = os.read(link.vendor_fd, 64)
+                        if legacy.is_input(data) and legacy.command_echo(data) is None:
+                            reading = legacy.Reading(data)
+                except BlockingIOError:
+                    pass
+                except OSError:
+                    link.drop("vendor_fd")
+                    reading = None
+                    last_rumble = (0, 0)
+            if link.pad_fd is not None:
+                try:
+                    pad.feed(link.pad_fd)
+                except OSError:
+                    link.drop("pad_fd")
+            for rtype, payload in dev.poll():
+                if not payload:
+                    continue
+                if args.verbose:
+                    print("output report: %s" % payload[:16].hex(" "))
+                out = ds5.parse_output(payload)
+                rumble = out["rumble"]
+                if rumble is None and is_rumble_stop(payload):
+                    rumble = (0, 0)
+                if rumble is not None:
+                    if rumble != last_rumble:
+                        last_rumble = rumble
+                        send_rumble(link, rumble, args.verbose)
+                if args.verbose and out["effects"]:
+                    print("trigger effects: %s" % out["effects"])
+
+
+
+            now = time.monotonic()
+            if now < next_send:
+                continue
+            next_send = now + period
+            if link.pad_fd is None:
+                pad = padin.PadState()      # neutral while the pad is away
+            state.lx = pad.abs.get(padin.ABS_X, 128)
+            state.ly = pad.abs.get(padin.ABS_Y, 128)
+            state.rx = pad.abs.get(padin.ABS_Z, 128)
+            state.ry = pad.abs.get(padin.ABS_RZ, 128)
+            state.l2 = pad.abs.get(padin.ABS_BRAKE, 0)
+            state.r2 = pad.abs.get(padin.ABS_GAS, 0)
+            ds5_buttons(state, pad)
+            if reading:
+                state.gyro = [
+                    int(round(reading.gyro_deg_s[src] * sign * gyro_f[dst]))
+                    for dst, (src, sign) in enumerate(gyro_map)
+                ]
+                state.accel = [
+                    int(round(reading.accel_g[src] * sign * accel_f[dst][0]) + accel_f[dst][1])
+                    for dst, (src, sign) in enumerate(accel_map)
+                ]
+            state.sensor_timestamp = int((now - t0) * 3_000_000) & 0xFFFFFFFF
+            report = bytearray(state.pack())
+            if reading:
+                if reading.home:
+                    report[10] |= ds5.PS_HOME
+                apply_paddles(report, state, reading.paddles, paddle_targets)
+            dev.send_input(bytes(report))
+    except KeyboardInterrupt:
+        return 0
+    finally:
+        # The pad holds whatever level it was last given, so a relay that exits
+        # without this leaves the motors running with nothing left to stop them.
+        zero_rumble(link)
+        dev.destroy()
+
+
+if __name__ == "__main__":
+    sys.exit(main())
