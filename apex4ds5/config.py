@@ -14,9 +14,14 @@ import os
 
 APP = "flydigi-apex4"
 DEFAULTS = {
+    # Which controller to present: "dualsense" or "dualsense-edge". The Edge has
+    # four extra buttons of its own, so paddles can map to real buttons there
+    # instead of being folded into touchpad halves and stick clicks.
+    "emulate": "dualsense-edge",
     # What the four back paddles do, in physical order left to right.
-    # One of: tp-left, tp-right, l3, r3, none
-    "paddles": ["l3", "tp-left", "tp-right", "r3"],
+    # Any pad: tp-left, tp-right, l3, r3, none
+    # Edge only: paddle-left, paddle-right, fn1, fn2
+    "paddles": ["paddle-left", "fn1", "fn2", "paddle-right"],
     # Pad axes -> DualSense axes. A leading minus inverts that axis.
     "gyro_map": "pitch,yaw,roll",
     "accel_map": "-x,z,y",

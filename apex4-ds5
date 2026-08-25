@@ -94,7 +94,20 @@ def calibration_factors():
 # Touchpad geometry as SDL reads it off a real DualSense.
 TOUCHPAD_W, TOUCHPAD_H = 1920, 1080
 TOUCH_POINT_OFFSET = 33          # first touch point in the input report
-PADDLE_TARGETS = ("tp-left", "tp-right", "l3", "r3", "none")
+PADDLE_TARGETS = ("tp-left", "tp-right", "l3", "r3",
+                  "paddle-left", "paddle-right", "fn1", "fn2", "none")
+EDGE_ONLY_TARGETS = ("paddle-left", "paddle-right", "fn1", "fn2")
+
+# A DualSense Edge is a DualSense with a different product id as far as the
+# kernel is concerned: hid-playstation sets is_edge purely from 0x0DF2 and asks
+# for no extra feature reports, then reads four more buttons out of bits 4-7 of
+# the same buttons[2] byte and publishes them as BTN_TRIGGER_HAPPY1..4. So the
+# pad's own paddles can become real buttons that Steam and games can bind,
+# instead of being folded into touchpad halves and stick clicks.
+PRODUCT_DUALSENSE = 0x0CE6
+PRODUCT_DUALSENSE_EDGE = 0x0DF2
+EDGE_FN1, EDGE_FN2 = 0x10, 0x20
+EDGE_PADDLE_LEFT, EDGE_PADDLE_RIGHT = 0x40, 0x80
 
 
 def apply_touch(report, x, y):
@@ -130,6 +143,14 @@ def apply_paddles(report, state, paddles, targets):
             touch = (TOUCHPAD_W // 4, TOUCHPAD_H // 2)
         elif target == "tp-right":
             touch = (TOUCHPAD_W * 3 // 4, TOUCHPAD_H // 2)
+        elif target == "fn1":
+            report[10] |= EDGE_FN1
+        elif target == "fn2":
+            report[10] |= EDGE_FN2
+        elif target == "paddle-left":
+            report[10] |= EDGE_PADDLE_LEFT
+        elif target == "paddle-right":
+            report[10] |= EDGE_PADDLE_RIGHT
     if touch:
         report[10] |= ds5.TOUCHPAD
         apply_touch(report, *touch)
@@ -379,6 +400,14 @@ def main():
     if len(paddle_targets) != 4 or any(p not in PADDLE_TARGETS for p in paddle_targets):
         raise SystemExit("paddles needs exactly four of %s, got %r"
                          % ("|".join(PADDLE_TARGETS), paddle_targets))
+    edge = settings["emulate"] == "dualsense-edge"
+    if settings["emulate"] not in ("dualsense", "dualsense-edge"):
+        raise SystemExit("emulate must be dualsense or dualsense-edge, got %r"
+                         % settings["emulate"])
+    misplaced = [p for p in paddle_targets if p in EDGE_ONLY_TARGETS and not edge]
+    if misplaced:
+        raise SystemExit("%s only exist on a DualSense Edge -- set "
+                         '"emulate": "dualsense-edge"' % ", ".join(misplaced))
     if args.calib:
         print("served DualSense calibration implies:")
         for name, f in zip(("pitch", "yaw", "roll"), gyro_f):
@@ -440,9 +469,11 @@ def main():
     features = {num: bytes([num]) + blob
                 for num, blob in ds5_usb.FEATURE_REPORTS.items()}
     features[0x05] = bytes([0x05]) + calibration_blob()
-    dev = uhid.Device("Apex 4 (DualSense)", ds5_usb.VENDOR_ID, ds5_usb.PRODUCT_ID,
+    product = PRODUCT_DUALSENSE_EDGE if edge else PRODUCT_DUALSENSE
+    name = "Apex 4 (DualSense Edge)" if edge else "Apex 4 (DualSense)"
+    dev = uhid.Device(name, ds5_usb.VENDOR_ID, product,
                       ds5_usb.REPORT_DESC, feature_reports=features)
-    print("virtual DualSense created; waiting for the kernel to bind it")
+    print("%s created; waiting for the kernel to bind it" % name)
     state = ds5.InputState()
     last_rumble = (0, 0)
     period = 1.0 / settings["rate_hz"]

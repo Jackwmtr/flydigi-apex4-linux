@@ -82,8 +82,8 @@ ACCEL_BIAS = (-6.1, -98.0, 13.0)
 # actual game (aiming up looked down), where the test page's icons were too small
 # to notice it.
 #
-# So all three are empirical now. Roll is the one still unconfirmed: games use
-# camera roll rarely enough that nothing has exercised it yet.
+# So all three are empirical now, roll included -- confirmed in a game after the
+# other two, and it turned out the derived sign was right for this one.
 GYRO_SIGN = {"pitch": 1, "yaw": 1, "roll": -1}
 
 

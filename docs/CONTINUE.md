@@ -10,8 +10,10 @@ emulation side, [DSX.md](DSX.md) for the unfinished part.
 Apex 4 on its 2.4 GHz dongle, presented to games as a DualSense:
 
 * gyro on all three axes, analogue triggers, sticks, hat, face buttons, shoulders,
-  stick clicks, the four back paddles (as touchpad halves and stick clicks), Home
-  as the PS button
+  stick clicks, Home as the PS button
+* the four back paddles as real buttons, by presenting a DualSense **Edge** --
+  same feature reports, one different product id, four bits in a byte already
+  being written. Confirmed in Steam, which shows an Edge and binds all four
 * rumble in both directions, two motors independently
 * survives the pad sleeping, being switched off and coming back
 * settings in `~/.config/flydigi-apex4/config.json`; flags override it
@@ -26,7 +28,6 @@ exercises the whole chain rather than a file list.
 | Adaptive triggers | the command family for `k2` is unknown — [DSX.md](DSX.md) is the map |
 | Bluetooth | no gyro, no rumble, and it cannot be fixed: no vendor interface, and the pad only transmits on input change |
 | Wired (cable) | never tested. Axis ranges are now read from the device, so it should adapt, but the vendor node's presence is unverified |
-| Roll sign | unconfirmed; pitch and yaw were fixed empirically in a game |
 | Other old-dialect pads | Vader 3/4, Direwolf 3/4, Apex 3 share the framing; the constants are per-model and must be measured |
 
 ## Method, because the numbers are the product
@@ -50,9 +51,17 @@ usefully, a −98 LSB offset on Y that hand-reading of static poses had estimate
 
 **Signs are not derivable.** Handedness analysis tells you whether a pad's own axes
 agree with each other; it does not tell you how they should land in a consumer's
-frame. Both derived signs turned out inverted in practice. Fix them in a game, or
-with Steam driving gyro-to-mouse — a controller test page's icons are too small to
-see a sign error, which is how one of them survived a whole session.
+frame. Two of the three derived signs turned out inverted in practice (roll's
+happened to be right). Fix them in a game, or with Steam driving gyro-to-mouse —
+a controller test page's icons are too small to see a sign error, which is how one
+of them survived a whole session.
+
+**Check the consumer you actually care about.** The kernel and SDL are different
+readers of the same virtual controller and they disagree in both directions: SDL
+applies calibration offsets the kernel throws away (which produced a phantom yaw
+drift), and it parses the Edge's extra buttons that this machine's kernel never
+registered on its evdev node. Testing through the kernel's nodes alone would have
+called one of those a success and the other a failure, wrongly.
 
 **Watch out for interpretation errors that look like hardware faults.** A battery
 byte read as a percentage said "4%" for a session while the pad's own display showed

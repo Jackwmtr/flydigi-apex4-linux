@@ -31,8 +31,10 @@ Works, in daily use on one pad. Specifically:
 
 - gyro, all three axes, no enable command, gyro-mouse off, 1000 Hz
 - analogue triggers, sticks, hat, face buttons, shoulders, stick clicks
-- the four back paddles, which DS mode has nowhere to put: two become touchpad
-  halves, two become stick clicks, configurable
+- the four back paddles as **real buttons**: the relay presents a DualSense
+  **Edge** by default, which has four buttons of its own, so Steam and games can
+  bind them like any other. Plain DualSense is still available, and there the
+  paddles fold into touchpad halves and stick clicks instead
 - the Home key as the PS button (it is a Consumer-page usage, not a gamepad button)
 - rumble both ways, two motors independently
 - survives the pad sleeping, being switched off, and coming back
@@ -41,7 +43,7 @@ Not done, honestly listed:
 
 - **adaptive triggers** — the pad has them, the command family for this model is
   not publicly known, nothing here drives them
-- **the roll sign** is unconfirmed; pitch and yaw were fixed empirically in a game
+
 - **Bluetooth**: buttons, sticks, hat and analogue triggers work; **gyro and
   rumble cannot** — there is no vendor interface over Bluetooth, and the pad only
   transmits on input change, so rotation alone sends nothing at all. The relay
@@ -90,12 +92,13 @@ Or by hand, which is how you try things out:
 ./apex4-ds5 --dump                       # decode and print, create no device
 ./apex4-ds5 --calib                      # the constants, and what the served
                                          # DualSense calibration implies
-./apex4-ds5 --paddles "l3,r3,tp-left,tp-right"
+./apex4-ds5 --paddles "paddle-left,fn1,fn2,paddle-right"
 ./apex4-ds5 --gyro-map "pitch,yaw,-roll" # a minus inverts that axis
 ```
 
-Settings live in `~/.config/flydigi-apex4/config.json` — paddle assignments, axis
-maps, report rate. Flags override the file, so anything can be tried without
+Settings live in `~/.config/flydigi-apex4/config.json` — which controller to
+present (`dualsense-edge` or `dualsense`), paddle assignments, axis maps, report
+rate. Flags override the file, so anything can be tried without
 editing it.
 
 If the motors ever stick on: `tools/rumble-off.py` works with the relay stopped.

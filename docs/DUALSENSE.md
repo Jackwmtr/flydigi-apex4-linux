@@ -64,6 +64,32 @@ An older openflydigi comment says 10000 raw per g, citing inputtino; the blob
 shipped in that same project implies 8192, so anything following the comment reads
 about 22% low.
 
+## Pretending to be an Edge instead, for real paddle buttons
+
+A plain DualSense has nowhere to put a pad's back paddles, which is why they end
+up folded into touchpad halves and stick clicks. A **DualSense Edge** has four
+buttons of its own, and as far as everything downstream is concerned an Edge *is*
+a DualSense with a different product id:
+
+| | |
+|---|---|
+| Product id | `0x0DF2` instead of `0x0CE6` |
+| Extra feature reports | **none** — the same three, unchanged |
+| Extra buttons | bits 4–7 of the same `buttons[2]` byte (report offset 10): FN1 `0x10`, FN2 `0x20`, left paddle `0x40`, right paddle `0x80` |
+
+So the switch costs one id and four bits, and the pad's four paddles become real
+buttons that Steam and games can bind — strictly better than the touchpad-click
+trick. `hid-playstation` sets its internal `is_edge` purely from the product id
+and asks for nothing else, and the descriptor served can stay the plain DualSense
+one.
+
+**Check the right consumer.** On the machine this was built on, the kernel bound
+the device as `054C:0DF2` but did *not* register `BTN_TRIGGER_HAPPY1..4` on its
+evdev node — and Steam showed the Edge with all four buttons working anyway,
+because SDL reads the controller over hidraw and parses those bits itself. A
+capability check on the kernel's node therefore proves nothing either way about
+what a game will see.
+
 ## Input report
 
 Report id `0x01`, 64 bytes. What the relay fills in:
