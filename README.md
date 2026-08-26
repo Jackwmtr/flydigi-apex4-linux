@@ -55,7 +55,8 @@ Not done, honestly listed:
 
 ## Requirements
 
-Linux with `uhid` and `hid_playstation` (any kernel since 5.12), `python3`, and
+Linux with `uhid` and `hid_playstation` (any kernel since 5.12; `install.sh`
+loads `uhid` and makes it load at boot), `python3`, and
 **no dependencies at all** — the whole thing is standard library, which is
 deliberate: on an immutable distribution, a `pip install` line in the instructions
 costs somebody an evening.
@@ -74,6 +75,23 @@ of the four things failed rather than "it does not work" — is the pad there an
 it this model, is the vendor node readable, is `/dev/uhid` writable, are the kernel
 modules present. Then it brings a virtual DualSense up briefly and watches whether
 the sensors move, so the whole chain is tested rather than the file list.
+
+### On a Steam Deck
+
+The same two commands, with three things that are specific to SteamOS and worth
+knowing before you start:
+
+* **`sudo` needs a password, and most Decks have none set.** Run `passwd` once
+  first. Without it the udev rule cannot be installed, and that rule is what makes
+  `/dev/uhid` writable — so the relay would have nothing to create its controller
+  on. This is the one step that genuinely requires root.
+* **A major SteamOS update can reset `/etc`**, taking the udev rule and the
+  `modules-load.d` entry with it. Re-run `./install.sh` after one; everything in
+  `$HOME` survives.
+* **The rootfs being read-only does not matter.** Nothing is installed outside
+  `/etc` and `$HOME`, so `steamos-readonly disable` is not needed.
+
+Gaming Mode is fine: the relay is a user service and starts with the session.
 
 `--hide-pad` writes an `environment.d` file that hides the physical pad from SDL,
 so Steam offers only the virtual DualSense and Steam Input can stay on. **It is

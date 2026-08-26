@@ -44,8 +44,9 @@ if [ "$uninstall" = 1 ]; then
   rm -f "$UNIT_DIR/flydigi-apex4.service" "$ENV_DIR/apex4-ds5.conf"
   rm -rf "$PREFIX"
   systemctl --user daemon-reload || true
-  echo "removed. The udev rule needs root:"
-  echo "  sudo rm -f $RULE_DST && sudo udevadm control --reload"
+  echo "removed. The parts that need root:"
+  echo "  sudo rm -f $RULE_DST /etc/modules-load.d/uhid.conf"
+  echo "  sudo udevadm control --reload"
   exit 0
 fi
 
@@ -73,6 +74,14 @@ if sudo cp "$SELF/$RULE_SRC" "$RULE_DST"; then
 else
   echo "could not install the rule; do it by hand:" >&2
   echo "  sudo cp $SELF/$RULE_SRC $RULE_DST && sudo udevadm control --reload" >&2
+fi
+
+echo "==> making sure uhid is loaded, now and at boot"
+if sudo sh -c 'modprobe uhid && printf "uhid\n" > /etc/modules-load.d/uhid.conf'; then
+  echo "    ok"
+else
+  echo "    could not; do it by hand if the self-test complains about uhid:" >&2
+  echo "      sudo modprobe uhid && echo uhid | sudo tee /etc/modules-load.d/uhid.conf" >&2
 fi
 
 if [ "$hide_pad" = 1 ]; then
