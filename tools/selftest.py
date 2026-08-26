@@ -69,13 +69,13 @@ def pad():
     return node
 
 
-def sensors(node, seconds=6.0):
+def sensors(node, seconds=12.0):
     """Gravity is the reference: at rest the accel vector must be about 1 g.
 
-    Waits longer than feels necessary on purpose: freshly plugged in over a cable,
-    the pad answers commands before it starts streaming, and a two-second window
-    reported "no input reports at all" on a pad whose stream was perfectly healthy
-    a moment later.
+    Waits far longer than feels necessary on purpose: freshly plugged in over a
+    cable, the pad answers commands before it starts streaming. A two-second
+    window called a healthy pad dead on one machine, and six seconds did the same
+    on a Steam Deck; the stream was running normally moments later in both cases.
     """
     global failures
     import select
@@ -97,7 +97,9 @@ def sensors(node, seconds=6.0):
         os.close(fd)
     if best is None:
         failures += 1
-        report(bad, "sensor stream", "no input reports at all")
+        report(bad, "sensor stream",
+               "no input reports in %.0fs -- if the pad was only just plugged in, "
+               "wait a moment and run this again" % seconds)
     elif 0.8 <= best <= 1.2:
         report(ok, "sensor stream", "gravity reads %.2f g" % best)
     else:
