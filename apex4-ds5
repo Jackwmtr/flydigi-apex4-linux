@@ -404,10 +404,16 @@ def main():
     if settings["emulate"] not in ("dualsense", "dualsense-edge"):
         raise SystemExit("emulate must be dualsense or dualsense-edge, got %r"
                          % settings["emulate"])
+    # Edge-only targets on a plain DualSense are dropped with a complaint rather
+    # than refused: this runs as a daemon, and with the physical pad hidden from
+    # SDL a refusal to start leaves the machine with no controller at all. A
+    # paddle that does nothing is a smaller problem than that.
     misplaced = [p for p in paddle_targets if p in EDGE_ONLY_TARGETS and not edge]
     if misplaced:
-        raise SystemExit("%s only exist on a DualSense Edge -- set "
-                         '"emulate": "dualsense-edge"' % ", ".join(misplaced))
+        print("%s only exist on a DualSense Edge; those paddles will do nothing."
+              ' Set "emulate": "dualsense-edge" to use them.' % ", ".join(misplaced))
+        paddle_targets = ["none" if p in EDGE_ONLY_TARGETS else p
+                          for p in paddle_targets]
     if args.calib:
         print("served DualSense calibration implies:")
         for name, f in zip(("pitch", "yaw", "roll"), gyro_f):

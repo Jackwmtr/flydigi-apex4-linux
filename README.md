@@ -27,7 +27,8 @@ turning a gamepad in the air.
 
 ## Status
 
-Works, in daily use on one pad. Specifically:
+Works, in daily use on one pad, on the 2.4 GHz dongle and over a cable.
+Specifically:
 
 - gyro, all three axes, no enable command, gyro-mouse off, 1000 Hz
 - analogue triggers, sticks, hat, face buttons, shoulders, stick clicks

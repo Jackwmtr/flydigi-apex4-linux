@@ -176,9 +176,12 @@ def command_echo(data):
 BATTERY_MAX_LEVEL = 5
 BATTERY_CHARGING = 6
 
-# Connection type sits at byte 14 on this pad, not at 13 where a Vader-era map
-# puts it: measured on the dongle, byte 14 reads 2 (wireless) while 13 reads 0.
-CONNECTION = {1: "wired", 2: "wireless", 3: "bluetooth"}
+# Connection type is at byte 13 after all -- where a Vader-era map puts it. On the
+# dongle it reads 0, which that map does not name, and reading the neighbouring
+# byte instead (a constant 2) looked like the fix until a cable disproved it: wired
+# reads 1 there while byte 14 stays 2. So 0 means the 2.4 GHz dongle on this pad,
+# and byte 14 is the motion-sensor type, also as the old map says.
+CONNECTION = {0: "dongle", 1: "wired", 2: "wireless", 3: "bluetooth"}
 
 
 def parse_device_info(data):
@@ -194,8 +197,8 @@ def parse_device_info(data):
         "battery_percent": None if charging
         else min(100, round(100 * level / BATTERY_MAX_LEVEL)),
         "cpu": data[12],
-        "connection": CONNECTION.get(data[14], "unknown(%d)" % data[14]),
-        "field13": data[13],
+        "connection": CONNECTION.get(data[13], "unknown(%d)" % data[13]),
+        "motion_sensor_type": data[14],
     }
 
 

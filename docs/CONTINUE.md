@@ -27,7 +27,6 @@ exercises the whole chain rather than a file list.
 |---|---|
 | Adaptive triggers | the command family for `k2` is unknown — [DSX.md](DSX.md) is the map |
 | Bluetooth | no gyro, no rumble, and it cannot be fixed: no vendor interface, and the pad only transmits on input change |
-| Wired (cable) | never tested. Axis ranges are now read from the device, so it should adapt, but the vendor node's presence is unverified |
 | Other old-dialect pads | Vader 3/4, Direwolf 3/4, Apex 3 share the framing; the constants are per-model and must be measured |
 
 ## Method, because the numbers are the product
@@ -100,10 +99,9 @@ captures rather than taking new ones.
    game and to Steam Input with no emulation, no udev rules and no daemon — it makes
    most of this repository unnecessary for the common case, which is the point.
    Use the empirical signs, and say in the PR that roll is unconfirmed.
-2. **Verify the cable.** Minutes, and it removes a caveat from the README.
-3. **Adaptive triggers.** [DSX.md](DSX.md). A day or two, needs Windows for the
+2. **Adaptive triggers.** [DSX.md](DSX.md). A day or two, needs Windows for the
    capture. Check the config API first — it may hand over the semantics for free.
-4. Later, if wanted: a GUI whose value is *live sensor and button inspection* for
+3. Later, if wanted: a GUI whose value is *live sensor and button inspection* for
    measuring other pads (a settings panel would only duplicate the config file), a
    Decky plugin for handheld installs, and per-model constants for the other
    old-dialect pads.
@@ -111,7 +109,9 @@ captures rather than taking new ones.
 ## Environment this was developed on
 
 * Bazzite (Fedora atomic), kernel 7.1.8, user `deck`, on a desktop machine.
-* Pad on its 2.4 GHz dongle, `04b4:2412`, firmware `04 15`, CPU `wch ch573`.
+* Pad on its 2.4 GHz dongle and, later, over a cable -- `04b4:2412` either way,
+  firmware `04 15`, CPU `wch ch573`. The product string differs between the two
+  ("Flydigi VADER3" vs "Flydigi APEX 4"), so match on ids, never on the name.
 * Relay under `systemd-run --user`; logs in the user journal.
 * An Apex 5 was **not** available. Where this document says something about the
   newer generation, it comes from openflydigi, not from measurement here.

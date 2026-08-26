@@ -14,9 +14,14 @@ KERNEL=="hidraw*", ATTRS{idVendor}=="04b4", ATTRS{idProduct}=="2412", TAG+="uacc
 # /dev/uhid, to create the virtual DualSense in the first place.
 KERNEL=="uhid", TAG+="uaccess"
 
-# The virtual DualSense's sub-devices. systemd tags the main gamepad node by
+# The virtual controller's sub-devices. systemd tags the main gamepad node by
 # itself, but leaves motion sensors, touchpad and headset jack as root:input --
-# so gyro is unreadable and touchpad-click is silently dead. Matched by the
-# DualSense ids rather than by name, so it holds whatever the emulator calls
-# the device; a real DualSense matches too, which is harmless.
-SUBSYSTEM=="input", ATTRS{id/vendor}=="054c", ATTRS{id/product}=="0ce6", TAG+="uaccess"
+# so gyro is unreadable and touchpad-click is silently dead. Matched by ids rather
+# than by name, so it holds whatever the emulator calls the device; real Sony pads
+# match too, which is harmless.
+#
+# **Both** product ids matter: 0ce6 is a DualSense and 0df2 a DualSense Edge, and
+# this project presents the Edge by default (its four extra buttons are how the
+# pad's back paddles become real buttons). A rule listing only 0ce6 silently stops
+# applying the moment the emulation switches -- which is exactly what happened.
+SUBSYSTEM=="input", ATTRS{id/vendor}=="054c", ATTRS{id/product}=="0ce6|0df2", TAG+="uaccess"

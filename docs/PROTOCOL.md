@@ -37,6 +37,23 @@ Find interface 2 by its report descriptor prefix `06 a0 ff`, **not** by vendor a
 product id: all four interfaces share those ids, and a command written to the
 wrong one is accepted silently and does nothing.
 
+## Wired behaves like the dongle, with three differences
+
+Measured with the dongle unplugged, pad in DInput mode over USB-C:
+
+* Same `04b4:2412` with four interfaces, and the vendor collection in the same
+  place — so nothing has to change to support the cable, though the node *numbers*
+  differ and must be found rather than remembered.
+* **The product string changes**: "Flydigi APEX 4" over the cable, "Flydigi VADER3"
+  through the dongle. Anything matching on the name will work in one mode only.
+* The vendor stream runs at about **500 Hz wired against 1000 Hz on the dongle**,
+  and the connection byte in the identity reply reads 1 rather than 0.
+
+One trap: freshly plugged in, the pad answers commands **before** it starts
+streaming. A self-test with a two-second window called a perfectly healthy pad
+"no input reports at all"; the stream was running a moment later. Give it several
+seconds, and poke it with a command first.
+
 ## The IMU streams unconditionally
 
 This is the finding that matters most, because the opposite was believed:
@@ -134,12 +151,17 @@ Device info reply (`p[15] == 236`), as measured on this pad:
 | 9, 10 | firmware |
 | 11 | **battery level 0..5**, with 6 meaning "charging" |
 | 12 | CPU type (2 = `wch ch573`) |
-| 14 | connection type (2 = wireless/dongle) |
+| 13 | connection: 0 = 2.4 GHz dongle, 1 = wired |
+| 14 | motion-sensor type (2 on this pad) |
 
 Battery is a **level, not a percentage**. Reading it as a percentage is why this
 pad appeared to sit at "4%" all session while its own display showed nearly full,
-and it is the same mistake behind flydigictl's issue #5. Note also that connection
-type is at byte 14 here, one along from where a Vader-era map puts it.
+and it is the same mistake behind flydigictl's issue #5.
+
+The connection byte is where a Vader-era map puts it (13), and the value 0 it
+reports on the dongle is simply not in that map's list. Reading the neighbouring
+byte instead looked like the fix for a whole session and was wrong: a cable settles
+it, because byte 13 goes to 1 while byte 14 stays 2.
 
 ## Calibration
 
@@ -292,8 +314,8 @@ One real reply to command 236, from this pad on its dongle:
 04 ff f0 54 00 07 ce 96 54 35 68 04 02 00 02 ec 00 00 e3 00 ...
       ^^ ^^    ^^^^^^^^^^^ ^^ ^^ ^^ ^^ ^^ ^^ ^^
       |  |     MAC         fw    |  |  |  |  echo 0xEC = 236
-      |  DeviceType 84 = Apex 4  |  |  |  connection 2 = wireless
-      |                          |  |  (byte 13, meaning unknown)
+      |  DeviceType 84 = Apex 4  |  |  |  motion-sensor type 2
+      |                          |  |  connection 0 = dongle (1 over a cable)
       |                          |  CPU 2 = wch ch573
       |                          battery level 4 of 5
       (byte 2, meaning unknown)

@@ -69,12 +69,22 @@ def pad():
     return node
 
 
-def sensors(node):
-    """Gravity is the reference: at rest the accel vector must be about 1 g."""
+def sensors(node, seconds=6.0):
+    """Gravity is the reference: at rest the accel vector must be about 1 g.
+
+    Waits longer than feels necessary on purpose: freshly plugged in over a cable,
+    the pad answers commands before it starts streaming, and a two-second window
+    reported "no input reports at all" on a pad whose stream was perfectly healthy
+    a moment later.
+    """
     global failures
     import select
-    fd = os.open(node, os.O_RDONLY | os.O_NONBLOCK)
-    best, end = None, time.time() + 2.0
+    fd = os.open(node, os.O_RDWR | os.O_NONBLOCK)
+    try:
+        os.write(fd, bytes([legacy.CMD_REPORT_ID, legacy.CMD_GET_DEVICE_INFO] + [0] * 10))
+    except OSError:
+        pass
+    best, end = None, time.time() + seconds
     try:
         while time.time() < end:
             if not select.select([fd], [], [], 0.2)[0]:
