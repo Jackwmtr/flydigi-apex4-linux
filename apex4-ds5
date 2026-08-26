@@ -439,8 +439,11 @@ def main():
 
     link = PadLink(args.node)
     if not link.open():
-        print("no Apex 4 found -- is the pad on?", file=sys.stderr)
-        return 1
+        # Not an error: the relay is built to tolerate an absent pad, so a
+        # service that starts before the pad is plugged in -- at boot, or right
+        # after installing -- should wait rather than exit and be restarted every
+        # couple of seconds by systemd.
+        print("no pad yet; waiting for one to appear")
 
     pad = padin.PadState(link.ranges)
     reading = None
@@ -492,9 +495,10 @@ def main():
         print("%s created; waiting for the kernel to bind it" % name)
         return made
 
-    dev = create_device()
+    # Nothing to present until there is a pad behind it.
+    dev = create_device() if link.fds() else None
     drop_after = settings["drop_after_s"]
-    absent_since = None
+    absent_since = None if link.fds() else time.monotonic()
     state = ds5.InputState()
     last_rumble = (0, 0)
     period = 1.0 / settings["rate_hz"]
