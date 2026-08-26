@@ -93,10 +93,11 @@ knowing before you start:
 
 Gaming Mode is fine: the relay is a user service and starts with the session.
 
-`--hide-pad` writes an `environment.d` file that hides the physical pad from SDL,
-so Steam offers only the virtual DualSense and Steam Input can stay on. **It is
-only safe together with the autostart unit**: with the pad hidden and the relay
-not running, there is no controller at all.
+Hiding the pad writes an `environment.d` file with both spellings of SDL's ignore
+hint (SDL3 renamed it, and an application ignores the one it does not know). **It
+is only safe together with the autostart unit**, which is why `install.sh` enables
+that: with the pad hidden and the relay not running, there is no controller at
+all. `--no-hide-pad` opts out.
 
 ## Run
 

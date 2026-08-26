@@ -10,27 +10,29 @@ RULE_SRC="udev/72-apex4-ds5.rules"
 RULE_DST="/etc/udev/rules.d/72-apex4-ds5.rules"
 SELF="$(cd "$(dirname "$0")" && pwd)"
 
-hide_pad=0
+hide_pad=1
 check_only=0
 uninstall=0
 force=0
 for arg in "$@"; do
   case "$arg" in
     --hide-pad) hide_pad=1 ;;
+    --no-hide-pad) hide_pad=0 ;;
     --check) check_only=1 ;;
     --force) force=1 ;;
     --uninstall) uninstall=1 ;;
     -h|--help)
       cat <<EOF
-usage: ./install.sh [--check] [--hide-pad] [--force] [--uninstall]
+usage: ./install.sh [--check] [--no-hide-pad] [--force] [--uninstall]
 
   --check      run the self-test and change nothing
   --force      install even if the self-test fails -- for setting a machine up
                before the pad is plugged in
-  --hide-pad   also hide the physical pad from SDL, so Steam offers only the
-               virtual DualSense and Steam Input can stay on. Implies enabling
-               the autostart unit: with the pad hidden and the relay stopped
-               there is no controller at all.
+  --no-hide-pad
+               leave the physical pad visible to SDL. By default it is hidden, so
+               Steam offers only the virtual controller and Steam Input can stay
+               on. The hiding is why the autostart unit is enabled: with the pad
+               hidden and the relay stopped there is no controller at all.
   --uninstall  remove everything this script installs, including the settings
                file, and put the machine back as it was
 EOF
@@ -138,7 +140,9 @@ if [ "$hide_pad" = 1 ]; then
   echo "==> hiding the physical pad from SDL"
   mkdir -p "$ENV_DIR"
   cp "$SELF/env/apex4-ds5.conf" "$ENV_DIR/"
-  echo "    Steam must be restarted to pick this up."
+  echo "    Takes effect for programs started after this. A running Steam keeps"
+  echo "    the environment it launched with, so restart it -- on a Steam Deck,"
+  echo "    where Steam is part of the session, reboot."
 fi
 
 echo "==> default settings file"
