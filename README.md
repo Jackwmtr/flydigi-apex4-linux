@@ -40,7 +40,7 @@ Specifically:
 - rumble both ways, two motors independently
 - survives the pad sleeping, being switched off, and coming back
 
-Not done, honestly listed:
+Not done:
 
 - **adaptive triggers** — the pad has them, the command family for this model is
   not publicly known, nothing here drives them
