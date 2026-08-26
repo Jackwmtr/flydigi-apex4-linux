@@ -6,7 +6,7 @@ A button that appears in one and not the other is the interesting case -- that i
 how the Home key gets found.
 """
 import os, select, struct, sys, time
-sys.path.insert(0, os.path.expanduser("~/.local/share/flydigi-legacy-ds5"))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from apex4ds5 import legacy, padin
 
 KEY_NAMES = {

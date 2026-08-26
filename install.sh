@@ -5,6 +5,7 @@ set -euo pipefail
 PREFIX="${XDG_DATA_HOME:-$HOME/.local/share}/flydigi-apex4"
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 ENV_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/environment.d"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/flydigi-apex4"
 RULE_SRC="udev/72-apex4-ds5.rules"
 RULE_DST="/etc/udev/rules.d/72-apex4-ds5.rules"
 SELF="$(cd "$(dirname "$0")" && pwd)"
@@ -26,7 +27,8 @@ usage: ./install.sh [--check] [--hide-pad] [--uninstall]
                virtual DualSense and Steam Input can stay on. Implies enabling
                the autostart unit: with the pad hidden and the relay stopped
                there is no controller at all.
-  --uninstall  remove everything this script installs
+  --uninstall  remove everything this script installs, including the settings
+               file, and put the machine back as it was
 EOF
       exit 0 ;;
     *) echo "unknown option: $arg" >&2; exit 2 ;;
@@ -40,13 +42,46 @@ if [ "$check_only" = 1 ]; then
 fi
 
 if [ "$uninstall" = 1 ]; then
-  systemctl --user disable --now flydigi-apex4 2>/dev/null || true
-  rm -f "$UNIT_DIR/flydigi-apex4.service" "$ENV_DIR/apex4-ds5.conf"
-  rm -rf "$PREFIX"
+  echo "==> silencing the motors first"
+  # The pad holds whatever rumble level it was last given, so removing the relay
+  # while an effect is running would leave it buzzing with nothing left to stop it.
+  python3 "$PREFIX/tools/rumble-off.py" 2>/dev/null \
+    || python3 "$SELF/tools/rumble-off.py" 2>/dev/null \
+    || echo "    (no pad on the bus, nothing to silence)"
+
+  echo "==> stopping and removing the service"
+  # Older names this project used, so an upgrade-then-uninstall leaves nothing.
+  for unit in flydigi-apex4 flydigi-legacy-ds5 apex4-ds5; do
+    systemctl --user disable --now "$unit" 2>/dev/null || true
+    rm -f "$UNIT_DIR/$unit.service"
+  done
   systemctl --user daemon-reload || true
-  echo "removed. The parts that need root:"
-  echo "  sudo rm -f $RULE_DST /etc/modules-load.d/uhid.conf"
-  echo "  sudo udevadm control --reload"
+
+  echo "==> removing files"
+  rm -rf "$PREFIX"
+  rm -f "$ENV_DIR/apex4-ds5.conf"
+  rm -f "$CONFIG_DIR/config.json"
+  rmdir "$CONFIG_DIR" 2>/dev/null || true
+
+  echo "==> removing the parts that need root"
+  if sudo sh -c "rm -f '$RULE_DST' /etc/modules-load.d/uhid.conf && \
+                 udevadm control --reload && \
+                 udevadm trigger --subsystem-match=input --subsystem-match=hidraw"; then
+    echo "    ok"
+  else
+    echo "    could not; do it by hand:" >&2
+    echo "      sudo rm -f $RULE_DST /etc/modules-load.d/uhid.conf" >&2
+    echo "      sudo udevadm control --reload" >&2
+  fi
+
+  echo
+  echo "Done. The uhid module is left loaded -- harmless, and it will simply not"
+  echo "load by itself after a reboot any more."
+  if [ -f "$ENV_DIR/apex4-ds5.conf" ]; then
+    echo "NOTE: could not remove $ENV_DIR/apex4-ds5.conf -- the pad stays hidden."
+  else
+    echo "Restart Steam so it sees the physical pad again."
+  fi
   exit 0
 fi
 

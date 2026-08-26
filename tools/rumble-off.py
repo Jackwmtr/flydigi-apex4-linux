@@ -13,7 +13,7 @@ to the mouse one is silently accepted and does nothing at all.
 """
 import fcntl, glob, os, struct, sys
 
-sys.path.insert(0, os.path.expanduser("~/.local/share/flydigi-legacy-ds5"))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from apex4ds5 import legacy
 
 HIDIOCGRDESCSIZE, HIDIOCGRDESC = 0x80044801, 0x90044802

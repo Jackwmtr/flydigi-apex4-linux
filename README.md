@@ -122,6 +122,13 @@ editing it.
 
 If the motors ever stick on: `tools/rumble-off.py` works with the relay stopped.
 
+To undo everything: `./install.sh --uninstall`. It silences the motors first,
+stops and removes the service (including names this project used earlier), deletes
+the install tree, the settings file and the `environment.d` entry, and removes the
+udev rule and the `modules-load.d` entry with the one `sudo` it needs. The `uhid`
+module is left loaded, which is harmless — it just stops loading by itself. Restart
+Steam afterwards so it sees the physical pad again.
+
 ## Not an Apex 4?
 
 The framing in [docs/PROTOCOL.md](docs/PROTOCOL.md) is shared across the old
