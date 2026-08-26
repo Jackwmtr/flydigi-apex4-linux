@@ -70,7 +70,8 @@ if [ "$uninstall" = 1 ]; then
   echo "==> removing the parts that need root"
   if sudo sh -c "rm -f '$RULE_DST' /etc/modules-load.d/uhid.conf && \
                  udevadm control --reload && \
-                 udevadm trigger --subsystem-match=input --subsystem-match=hidraw"; then
+                 udevadm trigger --subsystem-match=input --subsystem-match=hidraw \
+                                 --subsystem-match=misc"; then
     echo "    ok"
   else
     echo "    could not; do it by hand:" >&2
@@ -114,7 +115,12 @@ systemctl --user daemon-reload
 echo "==> udev rule (needs root; this is the only step that does)"
 if sudo cp "$SELF/$RULE_SRC" "$RULE_DST"; then
   sudo udevadm control --reload
-  sudo udevadm trigger --subsystem-match=input --subsystem-match=hidraw
+  # misc matters as much as the other two: /dev/uhid lives there, and on SteamOS
+  # it comes up root-only, so without this the rule takes effect only at the next
+  # reboot. On Fedora-derived systems the node is already open to everyone, which
+  # is why this went unnoticed.
+  sudo udevadm trigger --subsystem-match=input --subsystem-match=hidraw \
+                       --subsystem-match=misc
 else
   echo "could not install the rule; do it by hand:" >&2
   echo "  sudo cp $SELF/$RULE_SRC $RULE_DST && sudo udevadm control --reload" >&2
