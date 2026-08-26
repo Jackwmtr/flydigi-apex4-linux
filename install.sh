@@ -13,16 +13,20 @@ SELF="$(cd "$(dirname "$0")" && pwd)"
 hide_pad=0
 check_only=0
 uninstall=0
+force=0
 for arg in "$@"; do
   case "$arg" in
     --hide-pad) hide_pad=1 ;;
     --check) check_only=1 ;;
+    --force) force=1 ;;
     --uninstall) uninstall=1 ;;
     -h|--help)
       cat <<EOF
-usage: ./install.sh [--check] [--hide-pad] [--uninstall]
+usage: ./install.sh [--check] [--hide-pad] [--force] [--uninstall]
 
   --check      run the self-test and change nothing
+  --force      install even if the self-test fails -- for setting a machine up
+               before the pad is plugged in
   --hide-pad   also hide the physical pad from SDL, so Steam offers only the
                virtual DualSense and Steam Input can stay on. Implies enabling
                the autostart unit: with the pad hidden and the relay stopped
@@ -86,12 +90,17 @@ if [ "$uninstall" = 1 ]; then
 fi
 
 echo "==> checking this machine first"
-python3 "$SELF/tools/selftest.py" || {
+if ! python3 "$SELF/tools/selftest.py"; then
+  if [ "$force" = 0 ]; then
+    echo
+    echo "Self-test failed. Installing anyway would just move the failure later;"
+    echo "fix the above, or run with --check to see it again. If the pad simply"
+    echo "is not plugged in yet, --force installs regardless."
+    exit 1
+  fi
   echo
-  echo "Self-test failed. Installing anyway would just move the failure later;"
-  echo "fix the above, or run with --check to see it again."
-  exit 1
-}
+  echo "    self-test failed; continuing because --force was given"
+fi
 
 echo "==> installing to $PREFIX"
 mkdir -p "$PREFIX" "$UNIT_DIR"
