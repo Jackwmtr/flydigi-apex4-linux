@@ -285,12 +285,16 @@ class PadLink:
                     print("vendor stream : %s" % node)
                 except OSError:
                     self.vendor_fd = None
-            elif not self.warned_no_vendor:
-                self.warned_no_vendor = True
+            elif self.pad_fd is not None and not self.warned_no_vendor:
                 # Over Bluetooth the pad is a single HID device with no vendor
                 # collection at all, so there is nothing to read the IMU from.
                 # Say so once, rather than running as a DualSense whose gyro is
                 # permanently dead for no visible reason.
+                #
+                # Only when the pad itself is present, though: a pad that has
+                # simply gone away has no vendor interface either, and blaming
+                # Bluetooth for that sent me looking in the wrong place once.
+                self.warned_no_vendor = True
                 print("no vendor interface -- no gyro or vendor rumble in this "
                       "mode (Bluetooth?); buttons and sticks still work")
         if self.pad_fd is None:
@@ -299,6 +303,10 @@ class PadLink:
                 self.pad_fd = fd
                 self.ranges = padin.axis_ranges(fd)
                 print("gamepad node  : %s (%s)" % (node, name))
+                if self.vendor_fd is None and not self.warned_no_vendor:
+                    self.warned_no_vendor = True
+                    print("no vendor interface -- no gyro or vendor rumble in "
+                          "this mode (Bluetooth?); buttons and sticks still work")
                 print("axis ranges   : %s" % ", ".join(
                     "%d..%d" % r for r in self.ranges.values()) or "unknown")
         return self.vendor_fd is not None or self.pad_fd is not None
@@ -477,9 +485,16 @@ def main():
     features[0x05] = bytes([0x05]) + calibration_blob()
     product = PRODUCT_DUALSENSE_EDGE if edge else PRODUCT_DUALSENSE
     name = "Apex 4 (DualSense Edge)" if edge else "Apex 4 (DualSense)"
-    dev = uhid.Device(name, ds5_usb.VENDOR_ID, product,
-                      ds5_usb.REPORT_DESC, feature_reports=features)
-    print("%s created; waiting for the kernel to bind it" % name)
+
+    def create_device():
+        made = uhid.Device(name, ds5_usb.VENDOR_ID, product,
+                           ds5_usb.REPORT_DESC, feature_reports=features)
+        print("%s created; waiting for the kernel to bind it" % name)
+        return made
+
+    dev = create_device()
+    drop_after = settings["drop_after_s"]
+    absent_since = None
     state = ds5.InputState()
     last_rumble = (0, 0)
     period = 1.0 / settings["rate_hz"]
@@ -487,9 +502,28 @@ def main():
     t0 = time.monotonic()
     try:
         while True:
-            select.select(link.fds() + [dev.fd], [], [], period)
+            select.select(link.fds() + ([dev.fd] if dev else []), [], [], period)
             now_retry = time.monotonic()
             link.retry(now_retry)
+
+            # Take the virtual controller away once the pad has been gone long
+            # enough to mean it, and bring it back when the pad returns. Steam
+            # and SDL track hotplug perfectly well; what they cannot do is guess
+            # that a controller still being offered is not attached to anything.
+            if not link.fds():
+                if absent_since is None:
+                    absent_since = now_retry
+                elif dev and drop_after and now_retry - absent_since > drop_after:
+                    print("pad absent for %ds -- removing the virtual controller"
+                          % drop_after)
+                    dev.destroy()
+                    dev = None
+            else:
+                if dev is None:
+                    dev = create_device()
+                    state = ds5.InputState()
+                    last_rumble = (0, 0)
+                absent_since = None
             if link.vendor_fd is not None:
                 try:
                     while True:
@@ -507,6 +541,10 @@ def main():
                     pad.feed(link.pad_fd)
                 except OSError:
                     link.drop("pad_fd")
+
+            if dev is None:          # dropped while the pad is away
+                continue
+
             for rtype, payload in dev.poll():
                 if not payload:
                     continue
@@ -562,7 +600,8 @@ def main():
         # The pad holds whatever level it was last given, so a relay that exits
         # without this leaves the motors running with nothing left to stop them.
         zero_rumble(link)
-        dev.destroy()
+        if dev:
+            dev.destroy()
 
 
 if __name__ == "__main__":

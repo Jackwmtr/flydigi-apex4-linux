@@ -27,6 +27,11 @@ DEFAULTS = {
     "accel_map": "-x,z,y",
     # DualSense input report rate, Hz.
     "rate_hz": 250,
+    # Seconds the pad may be absent before the virtual controller is taken away
+    # too. A pad that naps leaves the USB bus and comes back, and a game holding
+    # the controller should not lose it over that -- but a pad switched off for
+    # good should not leave a phantom in Steam either. 0 keeps it forever.
+    "drop_after_s": 30,
     # Log every output report from the game, and every rumble level sent on.
     "verbose": False,
 }
