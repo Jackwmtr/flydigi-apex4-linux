@@ -3,7 +3,7 @@
 Written so that this can be continued cold — by a person, or by a model in a new
 session with no memory of how any of it was found. Read
 [PROTOCOL.md](PROTOCOL.md) for the pad, [DUALSENSE.md](DUALSENSE.md) for the
-emulation side, [DSX.md](DSX.md) for the unfinished part.
+emulation side, [TRIGGERS.md](TRIGGERS.md) for adaptive triggers.
 
 ## What works today
 
@@ -15,6 +15,8 @@ Apex 4 on its 2.4 GHz dongle, presented to games as a DualSense:
   same feature reports, one different product id, four bits in a byte already
   being written. Confirmed in Steam, which shows an Edge and binds all four
 * rumble in both directions, two motors independently
+* adaptive triggers: DualSense effects translated into the pad's own command 160,
+  each mode felt on hardware -- [TRIGGERS.md](TRIGGERS.md)
 * survives the pad sleeping, being switched off and coming back
 * settings in `~/.config/flydigi-apex4/config.json`; flags override it
 
@@ -25,7 +27,6 @@ exercises the whole chain rather than a file list.
 
 | | |
 |---|---|
-| Adaptive triggers | the command family for `k2` is unknown — [DSX.md](DSX.md) is the map |
 | Bluetooth | no gyro, no rumble, and it cannot be fixed: no vendor interface, and the pad only transmits on input change |
 | Other old-dialect pads | Vader 3/4, Direwolf 3/4, Apex 3 share the framing; the constants are per-model and must be measured |
 
@@ -84,6 +85,7 @@ nearly full: it is a 0..5 level. And the pad's Y accelerometer offset means it r
 | `button-watch.py` | log evdev codes and vendor bits side by side — how the Home key and the paddle bit order were found |
 | `motion-read.py` | read the kernel's DualSense motion node in physical units |
 | `ff-test.py`, `rumble-off.py` | rumble through the kernel; silence the motors |
+| `trigger-test.py` | fire DualSense trigger effects at the virtual controller, as a game would |
 
 A capture is worth more than a live experiment: the same recording can be re-sliced
 when a hypothesis changes, and several of the findings here came from re-reading old
@@ -99,8 +101,10 @@ captures rather than taking new ones.
    game and to Steam Input with no emulation, no udev rules and no daemon — it makes
    most of this repository unnecessary for the common case, which is the point.
    Use the empirical signs, and say in the PR that roll is unconfirmed.
-2. **Adaptive triggers.** [DSX.md](DSX.md). A day or two, needs Windows for the
-   capture. Check the config API first — it may hand over the semantics for free.
+2. **Adaptive triggers in a real game.** Everything so far was driven by
+   `tools/trigger-test.py`; a title with DualSense trigger support (Steam Input
+   off for it) is the check that matters, and its `unmapped` log lines are the
+   to-do list. Then, optionally, a DSX listener -- see [TRIGGERS.md](TRIGGERS.md).
 3. Later, if wanted: a GUI whose value is *live sensor and button inspection* for
    measuring other pads (a settings panel would only duplicate the config file), a
    Decky plugin for handheld installs, and per-model constants for the other

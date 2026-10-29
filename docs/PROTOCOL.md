@@ -249,9 +249,8 @@ Notes that cost time, for anyone taking the same route:
 
 ## What is not known
 
-* **The adaptive-trigger command family for `k2`.** The pad has ForceAdapt
-  triggers; nothing here drives them. Flydigi's SDK gates them on a device code,
-  and the numbers for `k2` are not in any public source. This is the one large gap.
+* ~~The adaptive-trigger command family for `k2`.~~ Found: command 160, read out
+  of Flydigi's SDK. See [TRIGGERS.md](TRIGGERS.md).
 * **The roll sign** in a consumer's frame.
 * **Bluetooth modes** — untested; the pad almost certainly speaks something else
   there.

@@ -1,7 +1,7 @@
 # flydigi-legacy-ds5
 
-Gyroscope and analogue triggers from a **Flydigi Apex 4** on Linux, by presenting
-it to games as a DualSense.
+Gyroscope, analogue and adaptive triggers from a **Flydigi Apex 4** on Linux, by
+presenting it to games as a DualSense.
 
 Flydigi's older pads (Apex 3/4, Vader 3/4, Direwolf 3/4) carry a 6-axis IMU that
 nothing on Linux reads. SDL recognises the Apex 4, its paddles and its rumble, but
@@ -12,7 +12,8 @@ already open and nobody parses.
 
 This reads them and relays the pad into a virtual DualSense on `/dev/uhid`, where
 the kernel's `hid-playstation` picks it up as a genuine PS5 controller. A game then
-gets gyro, analogue triggers and rumble with no Steam Input in the path.
+gets gyro, analogue triggers, adaptive trigger effects and rumble with no Steam
+Input in the path.
 
 **The measurements are the point of this repository**, more than the code. The
 code can be rewritten by anyone holding the pad; the constants took a session of
@@ -22,7 +23,7 @@ turning a gamepad in the air.
 |---|---|
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | the pad: interfaces, report map, command channel, calibration, what Bluetooth can and cannot do |
 | [docs/DUALSENSE.md](docs/DUALSENSE.md) | the emulation side: uhid, feature reports, report layouts, rumble, udev, and the traps in each |
-| [docs/DSX.md](docs/DSX.md) | adaptive triggers — the part that is *not* done, and the route to it |
+| [docs/TRIGGERS.md](docs/TRIGGERS.md) | adaptive triggers: the pad's command, the DualSense translation, what each effect feels like |
 | [docs/CONTINUE.md](docs/CONTINUE.md) | state of play, method, the measurement kit, next steps |
 
 ## Status
@@ -38,12 +39,13 @@ Specifically:
   paddles fold into touchpad halves and stick clicks instead
 - the Home key as the PS button (it is a Consumer-page usage, not a gamepad button)
 - rumble both ways, two motors independently
+- **adaptive triggers**: a game's DualSense trigger effects become the pad's own
+  force effects — resistance, a break-through band, vibration in the trigger.
+  Not one-to-one (the pad has fewer effects, and its break point stops at about
+  half the pull); see [docs/TRIGGERS.md](docs/TRIGGERS.md)
 - survives the pad sleeping, being switched off, and coming back
 
 Not done:
-
-- **adaptive triggers** — the pad has them, the command family for this model is
-  not publicly known, nothing here drives them
 
 - **Bluetooth**: buttons, sticks, hat and analogue triggers work; **gyro and
   rumble cannot** — there is no vendor interface over Bluetooth, and the pad only

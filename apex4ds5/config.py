@@ -32,6 +32,9 @@ DEFAULTS = {
     # the controller should not lose it over that -- but a pad switched off for
     # good should not leave a phantom in Steam either. 0 keeps it forever.
     "drop_after_s": 30,
+    # Forward the game's DualSense adaptive-trigger effects to the pad's own
+    # force triggers. Off leaves the triggers plain whatever a game asks for.
+    "adaptive_triggers": True,
     # Log every output report from the game, and every rumble level sent on.
     "verbose": False,
 }

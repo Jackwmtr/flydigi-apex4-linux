@@ -44,6 +44,35 @@ CMD_GET_DONGLE_VERSION = 17
 CMD_ECHO_OFFSET = 15
 DEVICE_TYPE_APEX4 = 84
 
+# Live adaptive-trigger effect, read out of Flydigi's own SDK
+# (ForceTriggerControllerCommandDInput in Flydigi.ControllerSdk.dll, inside
+# Space Station 4.x's single-file bundle) and proved on this pad:
+#
+#     [5, 160, 1, applyFlag, side, mode, p1..p5]
+#
+# byte 2 is the constant 1 -- not a length; copying the XInput branch's 6 there
+# is what made the first dozen framings fail silently. applyFlag 0 is Flydigi's
+# "onlyPreview": the effect engages and the profile in flash is left alone,
+# which is the only right choice for something a game drives many times a
+# minute. 1 also writes it into the stored profile.
+#
+# Modes are Flydigi's AdapterTriggerType: 0 normal, 1 race, 2 sniper,
+# 3 recoil, 4 lock, 5 vibration. The parameters are per mode, in the order
+# Flydigi's CreateParams emits them:
+#     race    stroke, resistance, matchStroke
+#     sniper  stroke, pressure, strength, frequency, matchStroke
+#     recoil  stroke, travel, resistance, 0, matchStroke
+#     lock    stroke, strength (255), matchStroke
+# stroke is on a 0..192 travel scale, not the 0..255 the axis reports.
+#
+# No ACK is relied on: byte 15 of the input stream is also accel Z's low byte,
+# so an "echo" of 160 is indistinguishable from a reading, and the relay has
+# nothing to do with one anyway.
+CMD_FORCE_TRIGGER = 160
+SIDE_LEFT, SIDE_RIGHT = 1, 2
+TRIGGER_MODE_NORMAL, TRIGGER_MODE_RACE = 0, 1
+CMD_LEN = 12
+
 # Measured. Slow and fast 360 deg turns agreed within 2% on yaw, so the firmware
 # does not clip the top of the range. Pitch and roll are anchored by the
 # accelerometer's own sweep through gravity (365 and 359 degrees), which is
@@ -155,6 +184,22 @@ def read_device_info(node, timeout=2.0):
 def haptic_packet(left, right):
     """Rumble command for the old dialect: one write to the vendor interface."""
     return bytes([CMD_REPORT_ID, CMD_HAPTIC, left & 0xFF, right & 0xFF])
+
+
+def force_trigger_packet(side, mode, params=(), apply=False):
+    """One live trigger effect, for one side. Never side 3 ("both").
+
+    `params` are the up-to-five mode parameters listed at CMD_FORCE_TRIGGER.
+    Flydigi's ForceTriggerConfigCommon has one quirk, kept here: a race with no
+    start position and matchStroke set gets matchStroke cleared.
+    """
+    values = [max(0, min(255, int(p))) for p in list(params)[:5]]
+    values += [0] * (5 - len(values))
+    if mode == TRIGGER_MODE_RACE and values[0] == 0 and values[2] == 1:
+        values[2] = 0
+    packet = [CMD_REPORT_ID, CMD_FORCE_TRIGGER, 1, 1 if apply else 0,
+              side, mode] + values
+    return bytes(packet + [0] * (CMD_LEN - len(packet)))
 
 
 def is_input(data):

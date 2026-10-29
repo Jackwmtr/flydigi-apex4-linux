@@ -21,7 +21,7 @@ those carry an inputtino attribution of their own, see NOTICE-openflydigi.
 import argparse, os, select, signal, struct, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from apex4ds5 import config, legacy, padin
+from apex4ds5 import config, legacy, padin, triggers
 from apex4ds5._ds5 import ds5, ds5_usb, uhid
 
 DS_GYRO_RES_PER_DEG_S = 1024
@@ -271,6 +271,10 @@ class PadLink:
         self.forced_node = forced_node
         self.vendor_fd = None
         self.pad_fd = None
+        # Bumped on every successful open of the vendor node, so the loop can
+        # tell a pad that has just come back -- and remembers nothing it was
+        # told -- from the one it already had.
+        self.vendor_opens = 0
         self.ranges = {}
         self.next_retry = 0.0
         self.warned_no_vendor = False
@@ -282,6 +286,7 @@ class PadLink:
                 try:
                     # O_RDWR: the same interface carries rumble back to the pad.
                     self.vendor_fd = os.open(node, os.O_RDWR | os.O_NONBLOCK)
+                    self.vendor_opens += 1
                     print("vendor stream : %s" % node)
                 except OSError:
                     self.vendor_fd = None
@@ -365,6 +370,8 @@ def main():
     ap.add_argument("--calib", action="store_true", help="show the served calibration's implications")
     ap.add_argument("--rate", type=float, help="DualSense report rate, Hz")
     ap.add_argument("--verbose", action="store_true", help="log output reports (rumble, triggers)")
+    ap.add_argument("--no-triggers", action="store_true",
+                    help="do not forward adaptive trigger effects to the pad")
     ap.add_argument("--accel-map", help="pad->DualSense accel axes, e.g. -x,z,y")
     ap.add_argument("--gyro-map", help="pad->DualSense gyro axes, e.g. pitch,yaw,-roll")
     ap.add_argument("--paddles",
@@ -397,6 +404,8 @@ def main():
         settings["rate_hz"] = args.rate
     if args.verbose:
         settings["verbose"] = True
+    if args.no_triggers:
+        settings["adaptive_triggers"] = False
     verbose = settings["verbose"]
     if source and verbose:
         print("settings      : %s" % source)
@@ -501,6 +510,13 @@ def main():
     absent_since = None if link.fds() else time.monotonic()
     state = ds5.InputState()
     last_rumble = (0, 0)
+    left_motor = 0
+    trig = triggers.TriggerRelay(verbose) if settings["adaptive_triggers"] else None
+    vendor_opens = link.vendor_opens
+    if trig and dev:
+        # A relay that died without its `finally` -- killed, or a crash in the
+        # middle of a game -- leaves the last effect engaged on the pad.
+        trig.reset(link)
     period = 1.0 / settings["rate_hz"]
     next_send = time.monotonic()
     t0 = time.monotonic()
@@ -509,6 +525,10 @@ def main():
             select.select(link.fds() + ([dev.fd] if dev else []), [], [], period)
             now_retry = time.monotonic()
             link.retry(now_retry)
+            if link.vendor_opens != vendor_opens:
+                vendor_opens = link.vendor_opens
+                if trig:
+                    trig.reopened(link)
 
             # Take the virtual controller away once the pad has been gone long
             # enough to mean it, and bring it back when the pad returns. Steam
@@ -527,6 +547,8 @@ def main():
                     dev = create_device()
                     state = ds5.InputState()
                     last_rumble = (0, 0)
+                    if trig:
+                        trig.reset(link)
                 absent_since = None
             if link.vendor_fd is not None:
                 try:
@@ -559,13 +581,14 @@ def main():
                 if rumble is None and is_rumble_stop(payload):
                     rumble = (0, 0)
                 if rumble is not None:
+                    left_motor = rumble[0]
                     if rumble != last_rumble:
                         last_rumble = rumble
                         send_rumble(link, rumble, verbose)
-                if verbose and out["effects"]:
-                    print("trigger effects: %s" % out["effects"])
-
-
+                if trig and out["effects"]:
+                    trig.handle(link, out["effects"], left_motor)
+            if trig:
+                trig.pump(link)
 
             now = time.monotonic()
             if now < next_send:
@@ -604,6 +627,8 @@ def main():
         # The pad holds whatever level it was last given, so a relay that exits
         # without this leaves the motors running with nothing left to stop them.
         zero_rumble(link)
+        if trig:
+            trig.reset(link)
         if dev:
             dev.destroy()
 
