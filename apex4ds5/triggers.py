@@ -30,6 +30,26 @@ is everything around it that a long-running relay has to get right.
 * **Writes are spaced.** Effects are queued and pumped from the relay's loop at
   most one per WRITE_GAP_S, rather than written back to back when one output
   report changes both triggers.
+
+* **Changes are rationed; repeats are not.** Every *change* of effect freezes
+  the pad's sticks for ~50 ms -- measured with R2 held and the right stick
+  spinning: 349 stick events/s with no effect, 246 with an effect changing
+  5 times a second and gaps of 56 ms, while the *same* packet sent 5 times a
+  second cost nothing (12 ms worst gap). Any mode, race as much as sniper.
+  Ghostwire: Tokyo ramps a vibration's frequency every ~20 ms, up to 39
+  changes a second, which froze the right stick most of the time it fired.
+  So a change of mode -- the shot, the release -- goes out at once, but no
+  two changes closer than MODE_GAP_S; a change of parameters within the same
+  mode waits, and then sends whatever is newest: PARAM_FAST_S after that
+  side's last change if some parameter moved by more than a quarter, else
+  PARAM_INTERVAL_S. A ramp becomes a few steps; the sticks stay live.
+
+  The two speeds are not decoration. A flat 500 ms made effects feel weaker:
+  Ghostwire's ramps start near zero frequency, so the first value of a ramp --
+  the one a mode change sends -- was held for half a second, and short bursts
+  never left it. Replayed against a recorded session, the pad's frequency sat
+  18% below the game's on average with a flat 500 ms, 12% with the two speeds,
+  for about the same number of changes (61 against 55; 157 unrationed).
 """
 import os, sys, time
 
@@ -38,9 +58,15 @@ from ._ds5.trigger_map import translate_ds5
 
 SIDES = {"left": legacy.SIDE_LEFT, "right": legacy.SIDE_RIGHT}
 
-# When to (re)send a changed effect, relative to the change.
+# When to repeat an effect after sending it -- repeats of an identical packet
+# do not disturb the pad, see above.
 SEND_SCHEDULE_S = (0.0, 0.1, 0.5)
 WRITE_GAP_S = 0.01
+# Rationing of changes, see above. Each change costs ~50 ms of frozen sticks.
+MODE_GAP_S = 0.1
+PARAM_INTERVAL_S = 0.5
+PARAM_FAST_S = 0.15
+SIGNIFICANT = 0.25             # relative change that earns PARAM_FAST_S
 
 # DualSense effect type 0x00 is not in Flydigi's table, so their relay leaves
 # the trigger as it was. But 0x00 is what a zeroed output report carries, and
@@ -100,12 +126,17 @@ def normal_packet(side):
 
 
 class TriggerRelay:
-    def __init__(self, verbose=False):
+    def __init__(self, verbose=False, writer=None, param_interval=PARAM_INTERVAL_S):
         self.verbose = verbose
+        self.writer = writer
+        self.param_interval = param_interval
         self.seen = {}       # side -> last DualSense effect key, to skip repeats
-        self.wanted = {}     # side -> packet the pad should be holding
-        self.due = {}        # side -> pending send times for wanted[side]
+        self.wanted = {}     # side -> (mode, packet) the game last asked for
+        self.applied = {}    # side -> (mode, packet) last sent to the pad
+        self.changed_at = {} # side -> when applied[side] was first sent
+        self.repeats = {}    # side -> pending repeat times for applied[side]
         self.last_write = 0.0
+        self.last_change = 0.0
 
     def _log(self, text):
         if self.verbose:
@@ -114,6 +145,11 @@ class TriggerRelay:
     def _write(self, link, side, packet):
         if link.vendor_fd is None:
             return False
+        # Through the writer thread while the relay runs, so a trigger write
+        # never stalls the loop that feeds the game; directly once it is gone.
+        if self.writer is not None:
+            self.writer.submit("trigger-" + side, packet)
+            return True
         try:
             os.write(link.vendor_fd, packet)
         except OSError as exc:
@@ -123,7 +159,7 @@ class TriggerRelay:
         return True
 
     def handle(self, link, effects, left_motor=0):
-        """Forward the effects of one DualSense output report."""
+        """Take in the effects of one DualSense output report; pump() sends."""
         for effect in effects:
             key = effect.key()
             if self.seen.get(effect.side) == key:
@@ -144,42 +180,56 @@ class TriggerRelay:
             mode, params = mapped
             packet = legacy.force_trigger_packet(SIDES[effect.side], mode, params)
             self._log("%r -> mode %d params %s" % (effect, mode, params))
-            # Different DualSense effects can land on the same Flydigi one;
-            # the pad needs telling (three times) once.
-            if self.wanted.get(effect.side) != packet:
-                self.wanted[effect.side] = packet
-                self._schedule(effect.side)
+            self.wanted[effect.side] = (mode, packet)
 
-    def _schedule(self, side, now=None):
-        now = time.monotonic() if now is None else now
-        self.due[side] = [now + d for d in SEND_SCHEDULE_S]
+    def _change_allowed(self, side, now):
+        """May wanted[side] replace what the pad holds, now?"""
+        if now - self.last_change < MODE_GAP_S:
+            return False
+        applied = self.applied.get(side)
+        wanted = self.wanted[side]
+        if applied is None or applied[0] != wanted[0]:
+            return True                          # a new mode: at once
+        since = now - self.changed_at.get(side, 0.0)
+        if since >= self.param_interval:
+            return True
+        # Bytes 6..10 are the five mode parameters. A small absolute floor, so
+        # that 1 -> 2 at the very bottom of a ramp is not "a doubling".
+        big = any(abs(a - b) > max(SIGNIFICANT * max(a, b), 4)
+                  for a, b in zip(applied[1][6:11], wanted[1][6:11]))
+        return big and since >= min(PARAM_FAST_S, self.param_interval)
 
     def pump(self, link, now=None):
-        """Send whatever is due, at most one packet per WRITE_GAP_S.
+        """Send what is due, at most one packet per WRITE_GAP_S.
 
         Called every loop iteration; cheap when there is nothing to do.
         """
-        if not self.due or link.vendor_fd is None:
+        if link.vendor_fd is None:
             return
         now = time.monotonic() if now is None else now
         if now - self.last_write < WRITE_GAP_S:
             return
-        for side in sorted(self.due, key=lambda s: self.due[s][0]):
-            times = self.due[side]
-            if times[0] > now:
-                continue
-            if self._write(link, side, self.wanted[side]):
-                self.last_write = now
-                times.pop(0)
-                if not times:
-                    del self.due[side]
-            return
+        for side, wanted in self.wanted.items():
+            if self.applied.get(side) != wanted and self._change_allowed(side, now):
+                if self._write(link, side, wanted[1]):
+                    self.applied[side] = wanted
+                    self.changed_at[side] = self.last_change = now
+                    self.last_write = now
+                    self.repeats[side] = [now + d for d in SEND_SCHEDULE_S[1:]]
+                return
+        for side, times in list(self.repeats.items()):
+            if times and times[0] <= now:
+                if self._write(link, side, self.applied[side][1]):
+                    self.last_write = now
+                    times.pop(0)
+                return
 
     def reopened(self, link):
         """The vendor interface is new: whatever was sent before went nowhere."""
         for side in self.wanted:
             self._log("re-sending %s trigger effect after reconnect" % side)
-            self._schedule(side)
+        self.applied.clear()
+        self.repeats.clear()
 
     def reset(self, link=None):
         """Forget the game's effects, and clear them on the pad if it is there.
@@ -189,7 +239,8 @@ class TriggerRelay:
         """
         self.seen.clear()
         self.wanted.clear()
-        self.due.clear()
+        self.applied.clear()
+        self.repeats.clear()
         # Synchronous, unlike everything else here: on exit there is no loop
         # left to pump a queue. Same repeat-and-space rule, so a lost packet
         # cannot leave a Lock behind.

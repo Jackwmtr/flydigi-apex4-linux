@@ -35,6 +35,11 @@ DEFAULTS = {
     # Forward the game's DualSense adaptive-trigger effects to the pad's own
     # force triggers. Off leaves the triggers plain whatever a game asks for.
     "adaptive_triggers": True,
+    # Least time between two changes of the same trigger effect's parameters,
+    # in ms. Each change freezes the pad's sticks for ~50 ms, and some games
+    # (Ghostwire: Tokyo) change an effect dozens of times a second; lower makes
+    # effects follow the game more closely at the cost of stick smoothness.
+    "trigger_update_ms": 500,
     # Log every output report from the game, and every rumble level sent on.
     "verbose": False,
 }

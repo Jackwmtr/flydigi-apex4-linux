@@ -124,10 +124,19 @@ Report `0x02` over USB (`0x31` over Bluetooth). Motor levels sit at `base+2` and
 `base+3`, valid when flag0 has `MOTOR` or `USE_RUMBLE_NOT_HAPTICS`, or flag2 has
 `COMPATIBLE_VIBRATION`.
 
-Three things, all learned by getting them wrong:
+Four things, all learned by getting them wrong:
 
-1. **Forward each report once.** The device holds the level until told otherwise,
-   exactly like real hardware.
+1. **Forward each report once** -- or rather, forward the newest level, from a
+   thread of its own. The device holds the level until told otherwise, exactly
+   like real hardware. But a write to the pad blocks ~2 ms (its OUT endpoint
+   polls every 2 ms, O_NONBLOCK or not), and a game doing haptics through rumble
+   changes the level in nearly every report. Written inline, from the loop that
+   drains the output reports, that loop never got back to sending input: flooded
+   with 1000 changing reports a second, the old relay sent **no input reports at
+   all** for the whole flood (worst gap 6066 ms); with the writer thread and
+   rumble paced to 15 ms, latest value wins, input kept going at ~238/s with a
+   worst gap of 6 ms, at 1000 and at 2600 reports a second. See
+   `apex4ds5/writer.py`.
 2. **Do not re-assert a held level.** Re-sending it periodically so a long effect
    "cannot fade" turns a missed stop into rumble that outlives the game, Steam,
    and the pad being switched off — the refresh loop becomes the only thing driving

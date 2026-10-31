@@ -83,6 +83,57 @@ again did. So the relay sends every change three times -- at once, after 100 ms
 and after 500 ms -- spaced at least 10 ms from any other trigger write. The
 command sets a state rather than starting anything, so a repeat costs nothing.
 
+### Every change freezes the sticks for ~50 ms
+
+The costliest fact about this command, found the hard way in Ghostwire: Tokyo,
+where the right stick lagged badly for as long as a trigger effect ran.
+
+Measured with R2 held at full travel and the right stick spinning, the pad's own
+evdev node counting stick events, effects sent straight to the vendor interface:
+
+| Commands to R2 | Stick events/s | Worst gap |
+|---|---|---|
+| none | 349-352 | 14-20 ms |
+| sniper, parameters **changing** 2/s | 307 | 60 ms |
+| sniper, parameters **changing** 5/s | 246 | 56 ms |
+| sniper, parameters **changing** 20/s | 25 | median gap 52 ms |
+| sniper, the **same** packet 5/s | 325 | 12 ms |
+| race, parameters **changing** 5/s | 279 | 56 ms |
+
+So each *change* of effect, in any mode, stops the sticks for about 50 ms;
+re-sending an identical packet costs nothing. The transport is not involved: the
+vendor stream and the gamepad interface keep their frame rates throughout, so
+this is the firmware busy re-seating the trigger and not sampling the sticks.
+
+Ghostwire ramps a vibration's frequency every ~20 ms -- up to 39 changes a
+second on one trigger -- which kept the stick frozen nearly all the time.
+Space Station never showed it because the game was in Xbox mode there, with no
+trigger effects at all.
+
+The relay therefore rations changes, not packets:
+
+* a change of **mode** goes out at once, but no two changes closer than 100 ms;
+* a change of **parameters** within a mode waits 150 ms after that side's last
+  change if some parameter moved by more than a quarter, 500 ms otherwise
+  (`trigger_update_ms` in the settings), and then sends whatever is newest;
+* repeats of what was sent stay as they were.
+
+A flat 500 ms was tried first and felt weaker: a ramp starts near zero, so the
+first value -- the one a mode change sends -- was held for half a second, and
+short bursts never got past it. Replayed against a recorded Ghostwire session
+(`--capture`):
+
+| Policy | Pad frequency below the game's | Changes, worst second | Changes, session |
+|---|---|---|---|
+| none | 3% | 10 | 157 |
+| flat 500 ms | 18% | 4 | 55 |
+| flat 250 ms | 10% | 5 | 85 |
+| 150 ms if >25%, else 500 ms | 12% | 5 | 61 |
+
+The numbers were fitted to one game. Another that animates its effects
+differently may want another `trigger_update_ms`; record it with `--capture` and
+replay it the same way.
+
 ### A live effect stays until cleared
 
 Reloading a profile (command 235) left a live Lock engaged, so nothing on the
