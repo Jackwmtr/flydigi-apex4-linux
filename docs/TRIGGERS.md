@@ -107,8 +107,15 @@ this is the firmware busy re-seating the trigger and not sampling the sticks.
 
 Ghostwire ramps a vibration's frequency every ~20 ms -- up to 39 changes a
 second on one trigger -- which kept the stick frozen nearly all the time.
-Space Station never showed it because the game was in Xbox mode there, with no
-trigger effects at all.
+
+Space Station's DS mode was never run against Ghostwire, so there is no
+comparison to draw. Under it, Uncharted played without lag -- most likely
+because Uncharted changes effects rarely (per weapon, per shot), and a 50 ms
+freeze every few seconds goes unnoticed. Read out of its assemblies, Space
+Station's DS mode drops repeats as this relay does (`OnPS5DataReceived`
+compares mode and parameters with the last ones sent) and has no explicit rate
+limit; its commands do go out one at a time through the SDK's queue, with an
+ACK wait of up to 500 ms, which may throttle it implicitly -- not confirmed.
 
 The relay therefore rations changes, not packets:
 
